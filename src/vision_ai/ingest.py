@@ -111,7 +111,7 @@ def ingest_folder(
     Args:
         root: 데이터셋 루트 폴더
         source: manifest에 기록할 출처 이름 (보통 데이터셋 key)
-        layout: "mvtec" | "flat" | "custom" — 경로에서 라벨을 추론하는 방식
+        layout: "visa" | "mvtec" | "flat" | "custom" — 경로에서 라벨을 추론하는 방식
         include_masks: ground_truth 마스크 이미지도 등록할지 여부
         limit: 최대 등록 건수 (미리보기용)
         progress: (처리한 수, 전체 수) 콜백
@@ -214,7 +214,7 @@ def remove_source(source: str) -> int:
 
 # --- 합성 샘플 생성 --------------------------------------------------------
 # 오픈 데이터셋 다운로드 전에도 수집→라벨링→학습→운영 전 과정을 돌려볼 수 있도록,
-# MVTec AD와 같은 폴더 구조로 가짜 표면 이미지를 만든다.
+# 실제 데이터셋과 같은 폴더 구조(기본 VisA)로 가짜 표면 이미지와 결함 마스크를 만든다.
 
 SYNTHETIC_SOURCE = "synthetic"
 
@@ -280,8 +280,27 @@ def _composite(base: np.ndarray, overlay: np.ndarray, alpha: np.ndarray) -> np.n
     return np.clip(blended, 0, 255).astype(np.uint8)
 
 
-def _draw_defect(rng: np.random.Generator, image: np.ndarray, defect: str) -> np.ndarray:
-    """표면 이미지에 결함을 그려 넣는다."""
+def _mask_from_difference(
+    before: np.ndarray, after: np.ndarray, threshold: int = 2
+) -> np.ndarray:
+    """결함을 그리기 전/후 차이에서 ground truth 마스크를 만든다.
+
+    도형을 마스크에 다시 그리면 페더링·안티에일리어싱 때문에 실제 변경 영역과
+    어긋난다. 변화량에서 직접 뽑으면 이미지와 마스크가 항상 일치한다.
+    """
+    diff = np.abs(after.astype(np.int16) - before.astype(np.int16)).max(axis=2)
+    return ((diff > threshold).astype(np.uint8)) * 255
+
+
+def _draw_defect(
+    rng: np.random.Generator, image: np.ndarray, defect: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """표면 이미지에 결함을 그려 넣고 (결함 이미지, 결함 마스크)를 반환한다.
+
+    마스크는 ground truth 역할을 한다 — 2단계에서 이 마스크로 ROI를 자동 추출하고,
+    3단계에서 위치 예측 성능을 평가할 때 정답으로 쓴다. 그래서 이미지에 그린 것과
+    정확히 같은 도형을 마스크에도 그린다.
+    """
     out = image.copy()
     size = out.shape[0]
 
@@ -295,8 +314,9 @@ def _draw_defect(rng: np.random.Generator, image: np.ndarray, defect: str) -> np
                 int(np.clip(start[1] + np.sin(angle) * length, 0, size - 1)),
             )
             shade = int(rng.integers(40, 100))
-            cv2.line(out, tuple(start.tolist()), end, (shade, shade, shade),
-                     thickness=int(rng.integers(1, 3)), lineType=cv2.LINE_AA)
+            thickness = int(rng.integers(1, 3))
+            origin = tuple(start.tolist())
+            cv2.line(out, origin, end, (shade, shade, shade), thickness, cv2.LINE_AA)
 
     elif defect == "dent":
         center = tuple(rng.integers(size // 5, size * 4 // 5, 2).tolist())
@@ -322,8 +342,9 @@ def _draw_defect(rng: np.random.Generator, image: np.ndarray, defect: str) -> np
                 0, size - 1,
             )
             points.append(point.copy())
-        cv2.polylines(out, [np.array(points, dtype=np.int32)], False, (35, 35, 40),
-                      thickness=int(rng.integers(1, 3)), lineType=cv2.LINE_AA)
+        polyline = [np.array(points, dtype=np.int32)]
+        thickness = int(rng.integers(1, 3))
+        cv2.polylines(out, polyline, False, (35, 35, 40), thickness, cv2.LINE_AA)
 
     elif defect == "stain":
         center = tuple(rng.integers(size // 5, size * 4 // 5, 2).tolist())
@@ -338,7 +359,7 @@ def _draw_defect(rng: np.random.Generator, image: np.ndarray, defect: str) -> np
         )
         out = _composite(out, tint_layer, mask * 0.6)
 
-    return out
+    return out, _mask_from_difference(image, out)
 
 
 def generate_synthetic(
@@ -350,23 +371,58 @@ def generate_synthetic(
     seed: int = 42,
     out_dir: Path | None = None,
     overwrite: bool = False,
+    layout: str = "visa",
 ) -> Path:
-    """MVTec AD 구조의 합성 데이터셋을 생성하고 경로를 반환한다.
+    """합성 데이터셋을 생성하고 경로를 반환한다.
 
-    구조: <out_dir>/<category>/train/good/*.png
-          <out_dir>/<category>/test/good/*.png
-          <out_dir>/<category>/test/<defect>/*.png
+    기본 예시 데이터셋이 VisA이므로 기본 layout도 `visa`로 두어, VisA를 내려받기 전에도
+    같은 폴더 구조·마스크 규칙으로 2단계 라벨링(마스크 기반 ROI 추출)까지 시험할 수 있게 한다.
+
+    layout="visa":
+        <out_dir>/<category>/Data/Images/Normal/*.png
+        <out_dir>/<category>/Data/Images/Anomaly/*.png
+        <out_dir>/<category>/Data/Masks/Anomaly/*.png
+    layout="mvtec":
+        <out_dir>/<category>/train/good/*.png
+        <out_dir>/<category>/test/{good,<defect>}/*.png
+        <out_dir>/<category>/ground_truth/<defect>/*_mask.png
     """
+    if layout not in ("visa", "mvtec"):
+        raise ValueError(f"지원하지 않는 layout: {layout} (visa 또는 mvtec)")
+
     categories = tuple(categories or SURFACE_STYLES.keys())
     out_dir = Path(out_dir) if out_dir else config.RAW_DIR / SYNTHETIC_SOURCE
     if overwrite and out_dir.exists():
         shutil.rmtree(out_dir)
 
     rng = np.random.default_rng(seed)
+    per_defect = max(1, n_defect // len(SYNTHETIC_DEFECTS))
 
     for category in categories:
         style = SURFACE_STYLES.get(category, next(iter(SURFACE_STYLES.values())))
 
+        if layout == "visa":
+            normal_dir = out_dir / category / "Data" / "Images" / "Normal"
+            anomaly_dir = out_dir / category / "Data" / "Images" / "Anomaly"
+            mask_dir = out_dir / category / "Data" / "Masks" / "Anomaly"
+            for directory in (normal_dir, anomaly_dir, mask_dir):
+                directory.mkdir(parents=True, exist_ok=True)
+
+            for i in range(n_normal):
+                cv2.imwrite(str(normal_dir / f"{i:04d}.png"), _make_surface(rng, style, size))
+
+            # VisA는 결함 유형을 폴더로 나누지 않는다 — 한 폴더에 모아 쓴다
+            index = 0
+            for defect in SYNTHETIC_DEFECTS:
+                for _ in range(per_defect):
+                    surface = _make_surface(rng, style, size)
+                    image, mask = _draw_defect(rng, surface, defect)
+                    cv2.imwrite(str(anomaly_dir / f"{index:04d}.png"), image)
+                    cv2.imwrite(str(mask_dir / f"{index:04d}.png"), mask)
+                    index += 1
+            continue
+
+        # mvtec
         train_good = out_dir / category / "train" / "good"
         test_good = out_dir / category / "test" / "good"
         train_good.mkdir(parents=True, exist_ok=True)
@@ -379,13 +435,15 @@ def generate_synthetic(
             target = test_good if i < n_test_normal else train_good
             cv2.imwrite(str(target / f"{i:04d}.png"), surface)
 
-        # 결함: 테스트 셋에만 유형별로 배치
-        per_defect = max(1, n_defect // len(SYNTHETIC_DEFECTS))
         for defect in SYNTHETIC_DEFECTS:
             defect_dir = out_dir / category / "test" / defect
+            truth_dir = out_dir / category / "ground_truth" / defect
             defect_dir.mkdir(parents=True, exist_ok=True)
+            truth_dir.mkdir(parents=True, exist_ok=True)
             for i in range(per_defect):
                 surface = _make_surface(rng, style, size)
-                cv2.imwrite(str(defect_dir / f"{i:04d}.png"), _draw_defect(rng, surface, defect))
+                image, mask = _draw_defect(rng, surface, defect)
+                cv2.imwrite(str(defect_dir / f"{i:04d}.png"), image)
+                cv2.imwrite(str(truth_dir / f"{i:04d}_mask.png"), mask)
 
     return out_dir

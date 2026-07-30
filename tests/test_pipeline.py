@@ -76,7 +76,7 @@ def test_catalog_keys_unique():
 def test_catalog_entries_are_wellformed():
     for dataset in datasets.CATALOG:
         assert dataset.name and dataset.url
-        assert dataset.layout in ("mvtec", "flat", "custom")
+        assert dataset.layout in datasets.LAYOUT_OPTIONS
         assert 1 <= dataset.everyday_fit <= 5
 
 
@@ -115,11 +115,80 @@ def test_describe_flags():
 
 def test_generate_synthetic_creates_mvtec_layout(sandbox):
     out = ingest.generate_synthetic(
-        categories=["wood_panel"], n_normal=5, n_defect=4, size=128, seed=7
+        categories=["wood_panel"], n_normal=5, n_defect=4, size=128, seed=7, layout="mvtec"
     )
     assert (out / "wood_panel" / "train" / "good").is_dir()
     assert (out / "wood_panel" / "test" / "scratch").is_dir()
     assert ingest.count_image_files(out) > 0
+
+
+def test_generate_synthetic_defaults_to_visa_layout(sandbox):
+    """기본 예시 데이터셋이 VisA이므로 합성 데이터도 같은 구조로 나와야 한다."""
+    out = ingest.generate_synthetic(
+        categories=["wood_panel"], n_normal=5, n_defect=4, size=128, seed=7
+    )
+    assert (out / "wood_panel" / "Data" / "Images" / "Normal").is_dir()
+    assert (out / "wood_panel" / "Data" / "Images" / "Anomaly").is_dir()
+    assert (out / "wood_panel" / "Data" / "Masks" / "Anomaly").is_dir()
+
+
+def test_generate_synthetic_rejects_unknown_layout(sandbox):
+    with pytest.raises(ValueError, match="layout"):
+        ingest.generate_synthetic(categories=["fabric"], layout="nope")
+
+
+@pytest.mark.parametrize("layout", ["visa", "mvtec"])
+def test_synthetic_masks_pair_with_defect_images(sandbox, layout):
+    """마스크는 결함 이미지와 1:1로 대응해야 한다 (ROI 자동 추출의 전제)."""
+    from vision_ai import labeling
+
+    out = ingest.generate_synthetic(
+        categories=["painted_metal"], n_normal=4, n_defect=4, size=128, seed=9, layout=layout
+    )
+    ingest.ingest_folder(out, source="synthetic", layout=layout)
+
+    resolved = labeling.resolve()
+    defects = resolved[resolved["label"] == config.LABEL_DEFECT]
+    assert not defects.empty
+
+    rois = [labeling.roi_from_image_path(p) for p in defects["path"]]
+    assert all(r is not None for r in rois), f"{layout}: 마스크를 찾지 못한 결함 이미지가 있다"
+    for x, y, w, h in rois:
+        assert w > 0 and h > 0
+        assert 0 <= x < 128 and 0 <= y < 128
+
+
+def test_synthetic_normal_images_have_no_mask(sandbox):
+    from vision_ai import labeling
+
+    out = ingest.generate_synthetic(
+        categories=["fabric"], n_normal=4, n_defect=4, size=128, seed=11
+    )
+    ingest.ingest_folder(out, source="synthetic", layout="visa")
+
+    resolved = labeling.resolve()
+    normals = resolved[resolved["label"] == config.LABEL_NORMAL]
+    assert not normals.empty
+    assert all(labeling.roi_from_image_path(p) is None for p in normals["path"])
+
+
+@pytest.mark.parametrize("defect", ingest.SYNTHETIC_DEFECTS)
+def test_draw_defect_mask_matches_drawing(defect):
+    """마스크가 실제 변경 영역을 감싸야 한다 — 어긋나면 ROI 정답이 틀린다."""
+    rng = np.random.default_rng(3)
+    surface = ingest._make_surface(rng, ingest.SURFACE_STYLES["ceramic_plate"], 256)
+    marked, mask = ingest._draw_defect(np.random.default_rng(5), surface, defect)
+
+    assert mask.shape == surface.shape[:2]
+    assert mask.dtype == np.uint8
+    assert (mask > 0).any(), "마스크가 비어 있다"
+
+    changed = np.abs(marked.astype(int) - surface.astype(int)).max(axis=2) > 3
+    ys, xs = np.nonzero(changed)
+    my, mx = np.nonzero(mask > 0)
+    # 마스크 바운딩박스가 실제 변경 영역을 (여유 5px 안에서) 포함한다
+    assert mx.min() <= xs.min() + 5 and mx.max() >= xs.max() - 5
+    assert my.min() <= ys.min() + 5 and my.max() >= ys.max() - 5
 
 
 @pytest.mark.parametrize("defect", ingest.SYNTHETIC_DEFECTS)
@@ -129,7 +198,7 @@ def test_draw_defect_stays_local(defect):
     style = ingest.SURFACE_STYLES["painted_metal"]
     surface = ingest._make_surface(rng, style, 256)
 
-    marked = ingest._draw_defect(np.random.default_rng(1), surface, defect)
+    marked, mask = ingest._draw_defect(np.random.default_rng(1), surface, defect)
 
     changed = (np.abs(marked.astype(int) - surface.astype(int)).max(axis=2) > 3)
     assert changed.any(), "결함이 전혀 그려지지 않았다"
@@ -146,7 +215,7 @@ def test_synthetic_surfaces_pass_quality_check(category):
 
 def test_ingest_folder_registers_and_dedupes(sandbox):
     out = ingest.generate_synthetic(
-        categories=["wood_panel"], n_normal=5, n_defect=4, size=128, seed=7
+        categories=["wood_panel"], n_normal=5, n_defect=4, size=128, seed=7, layout="mvtec"
     )
 
     first = ingest.ingest_folder(out, source="synthetic", layout="mvtec")
@@ -169,7 +238,7 @@ def test_manifest_paths_are_relative_and_resolvable(sandbox):
     out = ingest.generate_synthetic(
         categories=["fabric"], n_normal=3, n_defect=4, size=128, seed=3
     )
-    ingest.ingest_folder(out, source="synthetic", layout="mvtec")
+    ingest.ingest_folder(out, source="synthetic", layout="visa")
 
     df = storage.load_manifest()
     for value in df["path"]:
@@ -201,7 +270,7 @@ def test_remove_source(sandbox):
     out = ingest.generate_synthetic(
         categories=["ceramic_plate"], n_normal=3, n_defect=4, size=128, seed=5
     )
-    ingest.ingest_folder(out, source="synthetic", layout="mvtec")
+    ingest.ingest_folder(out, source="synthetic", layout="visa")
     assert len(storage.load_manifest()) > 0
 
     removed = ingest.remove_source("synthetic")
@@ -219,7 +288,7 @@ def test_summarize_counts_labels(sandbox):
     out = ingest.generate_synthetic(
         categories=["wood_panel"], n_normal=10, n_defect=8, size=128, seed=11
     )
-    ingest.ingest_folder(out, source="synthetic", layout="mvtec")
+    ingest.ingest_folder(out, source="synthetic", layout="visa")
 
     stats = storage.summarize(storage.load_manifest())
     assert stats["total"] == stats["normal"] + stats["defect"]

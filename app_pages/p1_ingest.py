@@ -13,9 +13,15 @@ FIT_STARS = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2
 
 
 def _catalog_tab() -> None:
+    default = datasets.default_dataset()
     st.markdown(
         "사내 데이터를 쓰지 않으므로 공개 데이터셋이 학습 데이터의 출발점이다. "
-        "아래는 표면 결함 분야에서 널리 쓰이는 데이터셋을 **일상 물건 적합도** 순으로 정리한 것이다."
+        "아래는 표면 결함 분야에서 널리 쓰이는 데이터셋을 정리한 것이다."
+    )
+    st.success(
+        f"**기본 예시 데이터셋: {default.name}** — 라이선스가 `{default.license}`로 "
+        "상업적 이용이 가능해, 이후 회사 업무로 연장할 때 데이터셋을 갈아치우지 않아도 된다.",
+        icon="⭐",
     )
     st.warning(
         "라이선스·URL은 정리 시점 기준 정보다. 특히 **비상업(NC)** 조건이 붙은 데이터셋이 많으므로, "
@@ -28,6 +34,7 @@ def _catalog_tab() -> None:
         [
             {
                 "데이터셋": d.name,
+                "기본": "⭐" if d.is_default else "",
                 "key": d.key,
                 "일상 적합도": FIT_STARS.get(d.everyday_fit, ""),
                 "카테고리 수": len(d.categories),
@@ -81,10 +88,13 @@ def _folder_tab() -> None:
     )
 
     catalog = datasets.recommended()
-    options = ["(직접 입력)"] + [f"{d.name} ({d.key})" for d in catalog]
-    choice = st.selectbox("데이터셋", options, key="folder_dataset")
+    options = [f"{d.name} ({d.key})" for d in catalog] + ["(직접 입력)"]
+    choice = st.selectbox(
+        "데이터셋", options, key="folder_dataset",
+        help="기본 예시 데이터셋인 VisA가 맨 앞에 온다.",
+    )
 
-    default_layout, source_default = "mvtec", ""
+    default_layout, source_default = datasets.default_dataset().layout, ""
     if choice != "(직접 입력)":
         key = choice.rsplit("(", 1)[-1].rstrip(")")
         dataset = datasets.get(key)
@@ -96,18 +106,15 @@ def _folder_tab() -> None:
     root_input = col1.text_input(
         "데이터셋 루트 폴더 경로",
         key="folder_path",
-        placeholder="/home/user/datasets/mvtec_anomaly_detection/bottle",
+        placeholder="/home/user/datasets/VisA",
     )
-    layout_options = ["mvtec", "flat", "custom"]
+    layout_options = list(datasets.LAYOUT_OPTIONS)
     layout = col2.selectbox(
         "구조 해석 방식",
         layout_options,
         index=layout_options.index(default_layout) if default_layout in layout_options else 0,
         key="folder_layout",
-        help=(
-            "mvtec: <카테고리>/<train|test>/<good|결함유형>/ · "
-            "flat: <클래스폴더>/이미지 · custom: 라벨 추론 없이 미라벨로 등록"
-        ),
+        help=" · ".join(f"{k}: {v}" for k, v in datasets.LAYOUT_HELP.items()),
     )
 
     col3, col4, col5 = st.columns(3)
@@ -255,12 +262,27 @@ def _synthetic_tab() -> None:
     n_normal = col2.number_input("카테고리별 정상 이미지", 5, 500, 40, 5, key="syn_normal")
     n_defect = col3.number_input("카테고리별 결함 이미지", 4, 400, 20, 4, key="syn_defect")
 
-    col4, col5, col6 = st.columns(3)
+    col4, col5, col6, col7 = st.columns(4)
     size = col4.select_slider("이미지 크기(px)", [128, 192, 256, 320, 512], value=256, key="syn_size")
     seed = col5.number_input("랜덤 시드", 0, 10_000, 42, 1, key="syn_seed")
-    overwrite = col6.checkbox("기존 합성 데이터 삭제 후 재생성", value=True, key="syn_overwrite")
+    syn_layout = col6.selectbox(
+        "폴더 구조", ["visa", "mvtec"], key="syn_layout",
+        help=(
+            "visa: 기본 예시 데이터셋과 같은 구조 (결함 유형 폴더 없음, 마스크 제공) · "
+            "mvtec: 결함 유형별 폴더 + ground_truth 마스크"
+        ),
+    )
+    overwrite = col7.checkbox("기존 합성 데이터 삭제 후 재생성", value=True, key="syn_overwrite")
 
-    st.caption(f"생성될 결함 유형: {', '.join(ingest.SYNTHETIC_DEFECTS)}")
+    st.caption(
+        f"생성될 결함 유형: {', '.join(ingest.SYNTHETIC_DEFECTS)} · "
+        "결함 픽셀 마스크를 함께 만들어 2단계에서 ROI 자동 추출을 시험할 수 있다."
+    )
+    if syn_layout == "visa":
+        st.caption(
+            "VisA 구조는 결함 유형을 폴더로 나누지 않으므로, 등록 시 모든 결함이 "
+            "`유형 미지정`으로 들어온다 — 실제 VisA와 같은 상황이며 2단계에서 유형을 지정한다."
+        )
 
     if not categories:
         st.info("표면 종류를 1개 이상 선택하세요.")
@@ -275,11 +297,12 @@ def _synthetic_tab() -> None:
                 size=int(size),
                 seed=int(seed),
                 overwrite=overwrite,
+                layout=syn_layout,
             )
             if overwrite:
                 ingest.remove_source(ingest.SYNTHETIC_SOURCE)
             result = ingest.ingest_folder(
-                out_dir, source=ingest.SYNTHETIC_SOURCE, layout="mvtec"
+                out_dir, source=ingest.SYNTHETIC_SOURCE, layout=syn_layout
             )
         st.success(f"{out_dir} 생성 완료 — {result.as_message()}", icon="✅")
 

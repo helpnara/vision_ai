@@ -74,11 +74,22 @@ DEFECT_TYPES: dict[str, str] = {
     "other": "기타",
 }
 
-DEFECT_TYPE_NONE = "none"  # 정상 이미지의 결함 유형 값
+DEFECT_TYPE_NONE = "none"                # 정상 이미지의 결함 유형 값
+DEFECT_TYPE_UNSPECIFIED = "unspecified"  # 결함이지만 유형이 아직 지정되지 않음
+
+_SPECIAL_DEFECT_LABELS = {
+    DEFECT_TYPE_NONE: "해당 없음",
+    DEFECT_TYPE_UNSPECIFIED: "유형 미지정",
+}
 
 
 def defect_type_label(key: str) -> str:
     """결함 유형 키를 한글 표시명으로 변환한다."""
-    if key == DEFECT_TYPE_NONE:
-        return "해당 없음"
+    if key in _SPECIAL_DEFECT_LABELS:
+        return _SPECIAL_DEFECT_LABELS[key]
     return DEFECT_TYPES.get(key, key)
+
+
+def is_standard_defect_type(key: str) -> bool:
+    """프로젝트 표준 결함 유형인지 판단한다 (정규화 대상 판별용)."""
+    return key in DEFECT_TYPES or key in _SPECIAL_DEFECT_LABELS

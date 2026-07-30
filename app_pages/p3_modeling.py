@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from vision_ai import storage
+from vision_ai import labeling
 
 APPROACHES = [
     (
@@ -16,7 +16,7 @@ APPROACHES = [
     (
         "이상탐지 (정상만 학습)",
         "정상 이미지만으로 정상 분포를 학습하고 이탈 정도를 결함 점수로 쓴다. "
-        "결함 샘플이 적은 상황에 맞고, MVTec AD가 전제하는 방식이다.",
+        "VisA는 정상 이미지가 결함보다 훨씬 많으므로 이 접근이 자연스럽다.",
         "2순위",
     ),
     (
@@ -43,16 +43,27 @@ METRICS = [
 
 def render() -> None:
     st.title("🧠 3단계 · 모델 개발 · 평가")
-    st.info("2단계 라벨링 완료 후 착수합니다. 아래는 확정된 설계 범위입니다.", icon="🚧")
+    st.info("다음 구현 대상입니다. 아래는 확정된 설계 범위입니다.", icon="🚧")
 
-    df = storage.load_manifest()
-    stats = storage.summarize(df)
+    resolved = labeling.resolve()
+    stats = labeling.stats(resolved)
     cols = st.columns(4)
-    cols[0].metric("학습 가능 이미지", f"{stats['labeled']:,}")
+    cols[0].metric("학습 가능 이미지", f"{stats['normal'] + stats['defect']:,}")
     cols[1].metric("정상", f"{stats['normal']:,}")
     cols[2].metric("결함", f"{stats['defect']:,}")
-    ratio = f"{stats['normal'] / stats['defect']:.1f}:1" if stats["defect"] else "—"
-    cols[3].metric("정상:결함 비율", ratio)
+    cols[3].metric("분할 배정", f"{stats['split_assigned']:,}")
+
+    if stats["total"] and not stats["split_assigned"]:
+        st.warning(
+            "학습·검증·테스트 분할이 아직 배정되지 않았다. **2. 라벨링 → 데이터 분할**에서 먼저 처리한다.",
+            icon="✂️",
+        )
+    if stats["unspecified_type"]:
+        st.warning(
+            f"결함 {stats['unspecified_type']:,}건의 유형이 미지정이다. 유형 분류를 학습하려면 "
+            "**2. 라벨링 → 라벨 검수**에서 지정해야 한다.",
+            icon="🏷️",
+        )
 
     st.divider()
     st.subheader("접근 방식과 순서")

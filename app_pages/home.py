@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from vision_ai import config, storage
+from vision_ai import config, datasets, labeling, storage
 
 STAGES = [
     {
@@ -17,9 +17,9 @@ STAGES = [
     {
         "no": 2,
         "name": "라벨링",
-        "status": "예정",
+        "status": "구현 완료",
         "icon": "🏷️",
-        "detail": "정상/결함 판정, 결함 유형 지정, 폴더 라벨 검수, 학습·검증·테스트 분할",
+        "detail": "라벨 검수 큐 · 폴더 라벨 검증 · 결함 유형 정규화 · 마스크 기반 ROI · 층화 분할",
     },
     {
         "no": 3,
@@ -59,12 +59,21 @@ def render() -> None:
     cols[4].metric("카테고리", f"{stats['categories']:,}")
 
     if stats["total"] == 0:
+        default = datasets.default_dataset()
         st.info(
-            "아직 수집된 이미지가 없습니다. **1. 데이터 수집** 화면에서 시작하세요.\n\n"
-            "오픈 데이터셋을 아직 내려받지 않았다면 *합성 샘플 생성* 탭으로 "
-            "전체 파이프라인을 먼저 시험해 볼 수 있습니다.",
+            f"아직 수집된 이미지가 없습니다. **1. 데이터 수집** 화면에서 시작하세요.\n\n"
+            f"기본 예시 데이터셋은 **{default.name}**({default.license})입니다. "
+            "아직 내려받지 않았다면 *합성 샘플 생성* 탭으로 전체 파이프라인을 먼저 시험해 볼 수 있습니다.",
             icon="👉",
         )
+    else:
+        label_stats = labeling.stats(labeling.resolve(df))
+        st.subheader("라벨링 현황")
+        cols = st.columns(4)
+        cols[0].metric("사람이 라벨/확인", f"{label_stats['human']:,}")
+        cols[1].metric("유형 미지정 결함", f"{label_stats['unspecified_type']:,}")
+        cols[2].metric("ROI 지정", f"{label_stats['with_roi']:,}")
+        cols[3].metric("분할 배정", f"{label_stats['split_assigned']:,}")
 
     st.divider()
     st.subheader("단계별 진행 현황")

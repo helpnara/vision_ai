@@ -218,7 +218,12 @@ def remove_source(source: str) -> int:
 
 SYNTHETIC_SOURCE = "synthetic"
 
+# 색상은 OpenCV 관례에 따라 BGR 순서다.
 SURFACE_STYLES: dict[str, dict] = {
+    # 제조업 PoC 대상 — 기판 위 규칙적 트레이스 패턴. 정렬된 구조라
+    # 위치별 이상탐지(models.PatchAnomalyModel의 per_position)에 적합하다.
+    "pcb_green": {"base": (60, 110, 45), "grain": "trace", "noise": 6},
+    "pcb_blue": {"base": (135, 75, 45), "grain": "trace", "noise": 6},
     "wood_panel": {"base": (150, 180, 205), "grain": "stripe", "noise": 8},
     "fabric": {"base": (170, 165, 160), "grain": "weave", "noise": 12},
     "painted_metal": {"base": (195, 195, 193), "grain": "smooth", "noise": 6},
@@ -244,6 +249,19 @@ def _make_surface(rng: np.random.Generator, style: dict, size: int) -> np.ndarra
         axis = np.arange(size)
         pattern = (np.sin(axis * 0.6)[:, None] + np.sin(axis * 0.6)[None, :]) * 5.0
         image += pattern[:, :, None]
+    elif grain == "trace":  # PCB 기판 위 배선/패드
+        pitch = max(size // 8, 16)
+        offset = int(rng.integers(0, 5))
+        layer = np.zeros_like(image)
+        thickness = max(size // 90, 2)
+        for position in range(offset, size, pitch):
+            cv2.line(layer, (position, 0), (position, size - 1), (58, 48, 42), thickness)
+            cv2.line(layer, (0, position), (size - 1, position), (58, 48, 42), thickness)
+        radius = max(size // 50, 3)
+        for y in range(offset + pitch // 2, size, pitch):
+            for x in range(offset + pitch // 2, size, pitch):
+                cv2.circle(layer, (x, y), radius, (74, 64, 56), -1, lineType=cv2.LINE_AA)
+        image += layer
     elif grain == "speckle":
         speckle = rng.normal(0, 3, (size, size, 1))
         image += speckle

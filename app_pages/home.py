@@ -24,9 +24,9 @@ STAGES = [
     {
         "no": 3,
         "name": "모델 개발 · 평가",
-        "status": "예정",
+        "status": "구현 완료",
         "icon": "🧠",
-        "detail": "베이스라인 학습, 이상탐지 모델, Claude 비전 2차 판정, 지표·오탐/미탐 리포트",
+        "detail": "베이스라인 · 패치 이상탐지(위치 히트맵) · Claude 2차 판정 · 임계값 조정 · 실험 기록",
     },
     {
         "no": 4,
@@ -43,8 +43,8 @@ STATUS_BADGE = {"구현 완료": "✅", "진행 중": "🚧", "예정": "⬜"}
 def render() -> None:
     st.title("🔍 비전 기반 표면 결함 탐지 파이프라인")
     st.markdown(
-        "일상 생활에서 접하는 물건의 **표면 결함**을 탐지하는 모델을 오픈 데이터셋 기반으로 "
-        "개발한다. 수집부터 운영까지 4단계를 이 앱에서 순차적으로 다룬다."
+        "**제조업 기준 PoC** — 물건 표면의 결함을 탐지하는 모델을 오픈 데이터셋 기반으로 개발한다. "
+        "수집부터 운영까지 4단계를 이 앱에서 순차적으로 다룬다."
     )
 
     df = storage.load_manifest()
@@ -94,7 +94,7 @@ def render() -> None:
             f"- 데이터 루트: `{config.DATA_ROOT}` (git 추적 대상 아님)"
         )
 
-    with st.expander("결함 유형 분류 체계 (일상 물건 기준)", expanded=False):
+    with st.expander("결함 유형 분류 체계 (표준 10종)", expanded=False):
         for key, label in config.DEFECT_TYPES.items():
             st.markdown(f"- `{key}` — {label}")
 

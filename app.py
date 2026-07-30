@@ -38,7 +38,7 @@ PAGES = [
 ]
 
 with st.sidebar:
-    st.caption("비전 기반 표면 결함 탐지")
+    st.caption("비전 기반 표면 결함 탐지 (제조업 PoC)")
     st.caption("데이터: 오픈 데이터셋 + 직접 촬영 (사내 데이터 미사용)")
 
 st.navigation(PAGES).run()

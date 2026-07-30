@@ -183,3 +183,38 @@ PYTHONPATH=src python -m pytest tests/ -q
 |----------|--------|------|
 | `VISION_AI_DATA_ROOT` | `./data` | 수집 이미지·manifest 위치 |
 | `VISION_AI_ARTIFACT_ROOT` | `./artifacts` | 모델·리포트 위치 |
+| `ANTHROPIC_API_KEY` | (없음) | 3단계 Claude 2차 판정. 없으면 그 기능만 비활성 |
+
+## 배포 (Streamlit Community Cloud)
+
+| 항목 | 값 |
+|------|-----|
+| Repository | `helpnara/vision_ai` |
+| Branch | `claude/vision-surface-defect-detection-j16xhj` |
+| Main file path | `app.py` |
+| Python version | 3.11 (3.10 이상이면 동작) |
+| Secrets | `ANTHROPIC_API_KEY` (선택) |
+
+배포 관련 설정은 저장소에 포함되어 있다.
+
+- `requirements.txt` — 의존성. `opencv-python-headless`를 쓰므로 `packages.txt`(apt 패키지)가 필요 없다.
+  일반 `opencv-python`으로 바꾸면 `libGL.so.1` 오류로 기동에 실패한다.
+- `.streamlit/config.toml` — 테마·업로드 상한. 서버 주소/포트는 고정하지 않는다(클라우드가 지정).
+- `.streamlit/secrets.toml.example` — 시크릿 형식. 실제 `secrets.toml`은 커밋하지 않고
+  앱 설정 화면(Settings → Secrets)에 붙여넣는다. Streamlit이 최상위 시크릿을 환경변수로도
+  올려주므로 코드는 `os.environ`만 읽으면 된다.
+- 페이지 디렉터리를 `pages/`가 아닌 `app_pages/`로 둔 이유는, Streamlit이 `pages/`를 자동
+  탐지해 `st.navigation`으로 구성한 메뉴와 중복되기 때문이다.
+
+### 배포 환경에서 달라지는 점
+
+무료 배포 환경은 **컨테이너가 일회성**이다. 재시작하면 `data/`·`artifacts/`가 비워지므로
+수집한 이미지, 라벨, 학습한 모델, 레지스트리, 판정 이력이 **모두 사라진다.**
+따라서 배포본은 다음 용도로 본다.
+
+- 적합: 화면·흐름 시연, 합성 샘플로 파이프라인 한 바퀴 돌려보기, 설계 리뷰
+- 부적합: 실제 라벨링 작업, VisA 전체 학습, 운영 이력 축적
+
+또한 공개 배포 시 접속자 전원이 같은 컨테이너의 CSV를 공유하며, 이 앱에는 로그인·권한 개념이
+없다. 여러 명이 동시에 라벨을 쓰면 서로의 작업에 섞인다. 실제 라벨링과 실데이터 학습은
+**로컬 실행**을 쓴다.

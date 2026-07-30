@@ -1,0 +1,17 @@
+# Streamlit 앱 설정 (로컬 실행 / Community Cloud 배포 공통)
+#
+# 서버 주소·포트는 여기서 고정하지 않는다. Community Cloud가 자체적으로 지정하므로
+# 여기서 박아두면 배포 시 충돌한다.
+
+[browser]
+# 사내 확장을 염두에 둔 PoC라 사용 통계 전송을 끈다.
+gatherUsageStats = false
+
+[server]
+# 1단계 업로드 탭 상한(MB). 무료 배포 환경은 메모리가 넉넉하지 않으므로
+# 대용량 데이터셋은 업로드 대신 폴더 인덱싱(로컬 실행)으로 다룬다.
+maxUploadSize = 200
+
+[theme]
+base = "light"
+primaryColor = "#2563eb"

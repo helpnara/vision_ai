@@ -1,4 +1,13 @@
-# 1~3단계 실행에 필요한 의존성
+# 1~4단계 실행에 필요한 의존성
+#
+# opencv는 반드시 -headless 판을 쓴다. 일반 opencv-python은 libGL.so.1을 요구해서
+# 데스크톱 라이브러리가 없는 배포 컨테이너에서 import 단계부터 실패한다.
+# (-headless를 쓰므로 packages.txt로 apt 패키지를 따로 깔 필요가 없다.)
+#
+# 하한만 지정해 두었다. 배포를 고정하고 싶으면 아래 "검증된 조합"으로 == 고정할 것.
+#   streamlit 1.60.0 / pandas 3.0.5 / numpy 2.4.6 / pillow 12.3.0 /
+#   opencv-python-headless 5.0.0.93 / scikit-learn 1.9.0 / joblib 1.5.3 /
+#   anthropic 0.120.2  (Python 3.11.15에서 전체 테스트 통과)
 streamlit>=1.60
 pandas>=2.2
 numpy>=1.26

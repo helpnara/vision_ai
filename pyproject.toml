@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vision-ai-surface-defect"
+version = "0.1.0"
+description = "오픈 데이터셋 기반 표면 결함 탐지 파이프라인 (Streamlit)"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.60",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pillow>=10.0",
+    "opencv-python-headless>=4.9",
+    "scikit-learn>=1.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"

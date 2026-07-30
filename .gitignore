@@ -1,0 +1,24 @@
+# 데이터 / 산출물 (용량이 크고 재생성 가능 — 저장소에 넣지 않는다)
+data/
+artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# 도구 캐시
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db

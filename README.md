@@ -20,7 +20,8 @@
 상업적 이용이 가능해 이후 회사 업무로 연장할 때 데이터셋을 갈아치우지 않아도 된다.
 (MVTec AD는 일상 품목이 많지만 CC BY-NC-SA로 비상업 한정이라 기본값에서 제외했다.)
 
-설계 배경과 결정 이력은 [`docs/surface-defect-detection-plan.md`](docs/surface-defect-detection-plan.md)에 있다.
+설계 배경과 결정 이력은 [`docs/surface-defect-detection-plan.md`](docs/surface-defect-detection-plan.md)에,
+다음에 할 일은 [`docs/todo.md`](docs/todo.md)에 있다.
 
 ## 실측 성능 (VisA PCB 4종)
 

@@ -78,7 +78,7 @@ def localization(model: models.PatchAnomalyModel, root: Path, rows: pd.DataFrame
     """마스크가 있는 결함 이미지에서 히트맵이 실제 위치를 맞히는지 측정한다."""
     import cv2
 
-    hits, ious, pixel_aurocs = [], [], []
+    hits, ious, pixel_aurocs, areas = [], [], [], []
     subset = rows[rows["mask"].notna()].head(limit)
     for _, row in subset.iterrows():
         image = viz.load_rgb(str(root / row["image"]))
@@ -87,15 +87,22 @@ def localization(model: models.PatchAnomalyModel, root: Path, rows: pd.DataFrame
             continue
         result = evaluate.localization_metrics(model.score_map(image), mask)
         hits.append(bool(result["hit"]))
+        areas.append(float((mask > 0).mean()))
         if not np.isnan(result["iou"]):
             ious.append(float(result["iou"]))
         if not np.isnan(result["pixel_auroc"]):
             pixel_aurocs.append(float(result["pixel_auroc"]))
     if not hits:
         return {}
+    # 적중률만 보면 낮아 보이지만, VisA PCB 결함은 이미지의 1% 미만인 미세 결함이다.
+    # 아무 데나 찍었을 때의 적중 확률(= 결함 면적 비율)과 견줘야 의미가 있다.
+    baseline = float(np.mean(areas)) if areas else float("nan")
+    hit_rate = float(np.mean(hits))
     return {
         "n": len(hits),
-        "hit_rate": float(np.mean(hits)),
+        "hit_rate": hit_rate,
+        "mask_area_fraction": baseline,
+        "hit_rate_vs_random": (hit_rate / baseline) if baseline else float("nan"),
         "iou_mean": float(np.mean(ious)) if ious else float("nan"),
         "pixel_auroc_mean": float(np.mean(pixel_aurocs)) if pixel_aurocs else float("nan"),
     }
@@ -186,8 +193,8 @@ def main() -> int:
         if result["localization"]:
             loc = result["localization"]
             print(
-                f"  위치 적중률 {loc['hit_rate']:.3f} / 픽셀 AUROC {loc['pixel_auroc_mean']:.4f}"
-                f" (n={loc['n']})",
+                f"  위치 적중률 {loc['hit_rate']:.3f} (무작위 대비 {loc['hit_rate_vs_random']:.0f}배)"
+                f" / 픽셀 AUROC {loc['pixel_auroc_mean']:.4f} (n={loc['n']})",
                 flush=True,
             )
 

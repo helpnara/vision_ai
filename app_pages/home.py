@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+
+import pandas as pd
 import streamlit as st
 
 from vision_ai import config, datasets, labeling, storage
@@ -38,6 +41,87 @@ STAGES = [
 ]
 
 STATUS_BADGE = {"구현 완료": "✅", "진행 중": "🚧", "예정": "⬜"}
+
+# 실데이터 측정 결과는 저장소에 함께 담아 둔다. 데이터(`data/`)는 용량 때문에 git 대상이
+# 아니므로, 배포본에서도 볼 수 있으려면 결과 파일만은 추적 대상이어야 한다.
+VALIDATION_PATH = config.PROJECT_ROOT / "docs" / "results" / "visa_validation.json"
+
+# 실제 생산 라인 불량률은 시험 구성(1:1)보다 훨씬 낮다. 그 차이를 눈에 보이게 두려고 함께 쓴다.
+ASSUMED_PREVALENCE = 0.01
+
+
+def _load_validation() -> dict | None:
+    if not VALIDATION_PATH.exists():
+        return None
+    try:
+        return json.loads(VALIDATION_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _render_validation() -> None:
+    """VisA 실데이터 측정 결과. 합성 데이터 수치와 혼동하지 않도록 출처를 함께 밝힌다."""
+    report = _load_validation()
+    st.subheader("실측 성능 (VisA PCB 4종)")
+    if report is None:
+        st.caption(
+            "아직 실데이터 측정 결과가 없습니다. "
+            "`PYTHONPATH=src python scripts/validate_visa.py`로 생성합니다."
+        )
+        return
+
+    rows = report.get("categories") or []
+    scored = [r for r in rows if "recall" in (r.get("held_out") or {})]
+
+    cols = st.columns(3)
+    cols[0].metric("평균 AUROC", f"{report.get('mean_auroc', float('nan')):.3f}")
+    cols[1].metric("평균 AP", f"{report.get('mean_average_precision', float('nan')):.3f}")
+    if scored:
+        mean_recall = sum(r["held_out"]["recall"] for r in scored) / len(scored)
+        mean_fpr = sum(r["held_out"]["false_alarm_rate"] for r in scored) / len(scored)
+        cols[2].metric("평균 재현율", f"{mean_recall:.3f}")
+    else:
+        mean_recall = mean_fpr = float("nan")
+
+    if rows:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "카테고리": r["category"],
+                        "AUROC": round(r["auroc"], 3),
+                        "AP": round(r["average_precision"], 3),
+                        "재현율": round((r.get("held_out") or {}).get("recall", float("nan")), 3),
+                        "정밀도": round((r.get("held_out") or {}).get("precision", float("nan")), 3),
+                        "오탐률": round(
+                            (r.get("held_out") or {}).get("false_alarm_rate", float("nan")), 3
+                        ),
+                    }
+                    for r in rows
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+    if scored:
+        # 재현율·오탐률은 불량률과 무관한 모델 특성이므로 임의의 불량률로 환산할 수 있다.
+        hit = mean_recall * ASSUMED_PREVALENCE
+        alarm = mean_fpr * (1 - ASSUMED_PREVALENCE)
+        precision = hit / (hit + alarm) if (hit + alarm) else 0.0
+        reviewed = hit + alarm
+        st.warning(
+            f"위 정밀도는 **정상:결함 = 1:1인 시험 구성** 기준이라 현장 기대치가 아닙니다. "
+            f"불량률을 {ASSUMED_PREVALENCE:.0%}로 가정하면 기대 정밀도는 **{precision:.1%}** 로 떨어집니다. "
+            f"따라서 이 모델은 자동 판정용이 아니라 **1차 스크리닝용**입니다 — "
+            f"미탐을 {1 - mean_recall:.1%}로 누르면서 사람이 볼 물량을 "
+            f"**{1 - reviewed:.0%}** 줄여 주는 것이 실제 효용입니다.",
+            icon="⚠️",
+        )
+    st.caption(
+        f"출처: {report.get('dataset', 'VisA')} · {report.get('protocol', '')} · "
+        f"{report.get('threshold_policy', '')}"
+    )
 
 
 def render() -> None:
@@ -84,6 +168,9 @@ def render() -> None:
             head.markdown(f"**{stage['icon']} {stage['no']}단계 · {stage['name']}**")
             tail.markdown(f"{badge} {stage['status']}")
             st.caption(stage["detail"])
+
+    st.divider()
+    _render_validation()
 
     st.divider()
     with st.expander("데이터 사용 원칙", expanded=False):

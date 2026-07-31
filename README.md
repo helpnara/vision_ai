@@ -22,6 +22,32 @@
 
 설계 배경과 결정 이력은 [`docs/surface-defect-detection-plan.md`](docs/surface-defect-detection-plan.md)에 있다.
 
+## 실측 성능 (VisA PCB 4종)
+
+합성 데이터가 아닌 **실제 VisA 데이터**로 공식 1cls 분할에서 측정한 값이다.
+전체 결과: [`docs/results/visa_validation.md`](docs/results/visa_validation.md)
+
+| 카테고리 | AUROC | AP | 재현율 | 정밀도 | 오탐률 |
+|---|---|---|---|---|---|
+| pcb1 | 0.829 | 0.789 | 0.940 | 0.681 | 0.440 |
+| pcb2 | 0.864 | 0.818 | 0.960 | 0.676 | 0.460 |
+| pcb3 | 0.682 | 0.703 | 0.960 | 0.565 | 0.725 |
+| pcb4 | 0.947 | 0.931 | 0.840 | 0.808 | 0.196 |
+| **평균** | **0.830** | **0.811** | **0.925** | 0.683 | 0.455 |
+
+임계값은 test의 절반에서 고르고 나머지 절반에서만 지표를 냈다 — 같은 데이터로 고르고
+보고하면 수치가 부풀려지기 때문이다. AUROC/AP는 임계값과 무관해 test 전체 기준이다.
+
+**정밀도를 현장 기대치로 읽으면 안 된다.** 시험 구성이 정상:결함 = 1:1이다.
+불량률 1%로 환산하면 기대 정밀도는 **2.0%** 로 떨어진다. 즉 이 모델은 자동 판정용이 아니라
+**1차 스크리닝용**이며, 미탐을 7.5%로 누르면서 사람이 볼 물량을 54% 줄이는 것이 실제 효용이다.
+
+재현:
+```bash
+PYTHONPATH=src python scripts/validate_visa.py       # 측정
+PYTHONPATH=src python scripts/analyze_visa_results.py # 해석 (불량률별 환산)
+```
+
 ## 실행
 
 ```bash

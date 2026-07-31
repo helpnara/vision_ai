@@ -1,0 +1,137 @@
+{
+  "dataset": "VisA (CC BY 4.0)",
+  "protocol": "공식 1cls 분할 — train은 정상만, test는 정상+결함",
+  "threshold_policy": "검증 절반에서 목표 재현율 95%, 나머지 절반에서 보고",
+  "config": {
+    "per_position": true,
+    "limit_train": 0
+  },
+  "categories": [
+    {
+      "category": "pcb1",
+      "n_train": 904,
+      "n_test": 200,
+      "n_test_defect": 100,
+      "fit_seconds": 42.6,
+      "auroc": 0.8285,
+      "average_precision": 0.789397417681058,
+      "held_out": {
+        "threshold": 4.667849049325715,
+        "tp": 47,
+        "fp": 22,
+        "fn": 3,
+        "tn": 28,
+        "recall": 0.94,
+        "precision": 0.6811594202898551,
+        "specificity": 0.56,
+        "f1": 0.7899159663865546,
+        "accuracy": 0.75,
+        "miss_rate": 0.06,
+        "false_alarm_rate": 0.44
+      },
+      "localization": {
+        "n": 40,
+        "hit_rate": 0.125,
+        "mask_area_fraction": 0.0020262367867508054,
+        "hit_rate_vs_random": 61.69071690799038,
+        "iou_mean": 0.06088739898774966,
+        "pixel_auroc_mean": 0.8978056486549308
+      }
+    },
+    {
+      "category": "pcb2",
+      "n_train": 901,
+      "n_test": 200,
+      "n_test_defect": 100,
+      "fit_seconds": 20.1,
+      "auroc": 0.8639,
+      "average_precision": 0.8182945023137183,
+      "held_out": {
+        "threshold": 4.8042262837038185,
+        "tp": 48,
+        "fp": 23,
+        "fn": 2,
+        "tn": 27,
+        "recall": 0.96,
+        "precision": 0.676056338028169,
+        "specificity": 0.54,
+        "f1": 0.7933884297520661,
+        "accuracy": 0.75,
+        "miss_rate": 0.04,
+        "false_alarm_rate": 0.46
+      },
+      "localization": {
+        "n": 40,
+        "hit_rate": 0.175,
+        "mask_area_fraction": 0.00327916566818436,
+        "hit_rate_vs_random": 53.367233530746155,
+        "iou_mean": 0.06766986180893128,
+        "pixel_auroc_mean": 0.76187708251511
+      }
+    },
+    {
+      "category": "pcb3",
+      "n_train": 905,
+      "n_test": 201,
+      "n_test_defect": 100,
+      "fit_seconds": 19.0,
+      "auroc": 0.6815841584158416,
+      "average_precision": 0.7032326925181263,
+      "held_out": {
+        "threshold": 4.570164250519313,
+        "tp": 48,
+        "fp": 37,
+        "fn": 2,
+        "tn": 14,
+        "recall": 0.96,
+        "precision": 0.5647058823529412,
+        "specificity": 0.27450980392156865,
+        "f1": 0.711111111111111,
+        "accuracy": 0.6138613861386139,
+        "miss_rate": 0.04,
+        "false_alarm_rate": 0.7254901960784313
+      },
+      "localization": {
+        "n": 40,
+        "hit_rate": 0.225,
+        "mask_area_fraction": 0.006232060926163039,
+        "hit_rate_vs_random": 36.10362649944891,
+        "iou_mean": 0.1149760796503263,
+        "pixel_auroc_mean": 0.9152893727523551
+      }
+    },
+    {
+      "category": "pcb4",
+      "n_train": 904,
+      "n_test": 201,
+      "n_test_defect": 100,
+      "fit_seconds": 20.0,
+      "auroc": 0.9471287128712871,
+      "average_precision": 0.9314433592873622,
+      "held_out": {
+        "threshold": 5.984059285309354,
+        "tp": 42,
+        "fp": 10,
+        "fn": 8,
+        "tn": 41,
+        "recall": 0.84,
+        "precision": 0.8076923076923077,
+        "specificity": 0.803921568627451,
+        "f1": 0.8235294117647058,
+        "accuracy": 0.8217821782178217,
+        "miss_rate": 0.16,
+        "false_alarm_rate": 0.19607843137254902
+      },
+      "localization": {
+        "n": 40,
+        "hit_rate": 0.25,
+        "mask_area_fraction": 0.011298334747390665,
+        "hit_rate_vs_random": 22.127154628494004,
+        "iou_mean": 0.12539937560795456,
+        "pixel_auroc_mean": 0.9006410078055833
+      }
+    }
+  ],
+  "mean_auroc": 0.8302782178217822,
+  "mean_average_precision": 0.8105919929500662
+}

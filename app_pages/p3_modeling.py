@@ -12,6 +12,7 @@ from vision_ai import (
     evaluate,
     experiments,
     features,
+    guide,
     labeling,
     models,
     storage,
@@ -117,7 +118,8 @@ def _synthetic_warning(labeled: pd.DataFrame) -> None:
 
 def _data_tab(df: pd.DataFrame) -> None:
     if df.empty:
-        st.info("수집된 이미지가 없습니다. **1. 데이터 수집**에서 시작하세요.", icon="📥")
+        st.info("수집된 이미지가 없습니다. 1단계에서 시작하세요.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     labeled = _labeled(df)
@@ -168,15 +170,66 @@ def _data_tab(df: pd.DataFrame) -> None:
 
 # --- 2) 베이스라인 ------------------------------------------------------------
 
+def _advice_banner(df: pd.DataFrame, kind: str) -> bool:
+    """이 탭의 방식이 지금 데이터로 가능한지, 권장되는지 미리 알려준다.
+
+    선택지만 주고 무엇을 골라야 할지 알려주지 않으면 초보자는 막힌다. 특히 VisA 공식 분할은
+    학습 분할에 결함이 없어 지도학습이 시작조차 안 되는데, 화면은 선택지를 똑같이 보여준다.
+    """
+    advice = guide.model_advice(df)
+    blocked = advice.baseline_blocked if kind == guide.KIND_BASELINE else advice.anomaly_blocked
+
+    if blocked:
+        st.error(
+            "**지금 데이터로는 이 방식을 쓸 수 없습니다.**\n\n"
+            + "\n\n".join(advice.notes),
+            icon="🚧",
+        )
+        other = "이상탐지" if kind == guide.KIND_BASELINE else "베이스라인"
+        st.info(f"대신 **{other}** 탭을 사용하세요. {advice.reason}", icon="👉")
+        return True
+
+    if advice.recommended == kind:
+        st.success(f"**이 데이터에는 이 방식을 권합니다.** {advice.reason}", icon="✅")
+    else:
+        other = "이상탐지" if advice.recommended == guide.KIND_ANOMALY else "베이스라인"
+        st.info(f"쓸 수는 있지만 이 데이터에는 **{other}** 를 권합니다. {advice.reason}", icon="💡")
+
+    for note in advice.notes:
+        st.warning(note, icon="⚠️")
+    return False
+
+
+def _empty_state_links(df: pd.DataFrame) -> None:
+    """막혔을 때 어디로 가야 하는지 링크로 알려준다. 문구만 띄우면 초보자는 길을 잃는다."""
+    if df.empty:
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
+        return
+    labeled = _labeled(df)
+    if labeled.empty:
+        st.page_link(guide.PAGE_LABELING, label="2단계 라벨 검수로 이동", icon="➡️")
+    else:
+        st.page_link(guide.PAGE_LABELING, label="2단계 데이터 분할로 이동", icon="➡️")
+
+
 def _baseline_tab(df: pd.DataFrame) -> None:
     st.markdown(
         "고전 CV 특징 + 분류기로 **성능 하한선**을 만든다. 무거운 모델 없이 곧바로 돌아가므로, "
         "이후 모델이 이보다 나은지 판단하는 기준이 된다."
     )
+    if df.empty:
+        st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
+        return
+
+    if _advice_banner(df, guide.KIND_BASELINE):
+        return   # 이 데이터로는 불가능하다 — 안내에서 이유와 대안을 이미 설명했다
+
     ready, problems = _readiness(df)
     if not ready:
         for problem in problems:
             st.error(problem, icon="🚧")
+        _empty_state_links(df)
         return
 
     labeled = _labeled(df)
@@ -281,6 +334,10 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
     )
     if df.empty:
         st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
+        return
+
+    if _advice_banner(df, guide.KIND_ANOMALY):
         return
 
     labeled = _labeled(df)
@@ -671,7 +728,11 @@ def _business_impact(metrics: dict) -> None:
 def _report_tab(df: pd.DataFrame) -> None:
     result = st.session_state.get(_RESULT_KEY)
     if result is None:
-        st.info("먼저 **베이스라인** 또는 **이상탐지** 탭에서 모델을 실행하세요.", icon="🧠")
+        st.info(
+            "먼저 **베이스라인** 또는 **이상탐지** 탭에서 모델을 실행하세요. "
+            "어느 쪽을 골라야 할지는 각 탭이 데이터를 보고 알려줍니다.",
+            icon="🧠",
+        )
         return
 
     scores, y = result["scores"], result["y"]

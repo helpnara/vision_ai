@@ -67,6 +67,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+홈 화면이 **지금 어디까지 왔고 다음에 무엇을 할지** 알려주므로, 순서를 몰라도 따라갈 수 있다.
+
 `app.py`가 진입점이다. `src/`를 import 경로에 자동으로 추가하므로 별도 설치 없이 실행된다.
 패키지로 설치해서 쓰려면 `pip install -e .`도 가능하다.
 
@@ -176,6 +178,7 @@ src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
   storage.py               manifest 읽기/쓰기, 중복 제거
   datasets.py              오픈 데이터셋 카탈로그, 폴더 구조 파서
   quality.py               이미지 품질 점검
+  guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장)
   ingest.py                수집 로직 + 합성 데이터 생성
   labeling.py              라벨 이력·유형 매핑·분할·마스크 ROI
   features.py              전처리 + 이미지(67차원)/패치(14차원) 특징

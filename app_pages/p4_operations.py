@@ -11,6 +11,7 @@ from vision_ai import (
     config,
     experiments,
     features,
+    guide,
     labeling,
     monitoring,
     registry,
@@ -38,6 +39,9 @@ def _production_banner() -> pd.Series | None:
             "서비스 중인 모델이 없습니다. **모델 레지스트리** 탭에서 3단계 실행을 등록하고 승격하세요.",
             icon="📚",
         )
+        if experiments.load_runs().empty:
+            st.caption("등록할 실행이 아직 없습니다. 3단계에서 모델을 먼저 학습하세요.")
+            st.page_link(guide.PAGE_MODELING, label="3단계 모델 개발·평가로 이동", icon="➡️")
         return None
     threshold = prod.get("threshold")
     st.success(
@@ -73,7 +77,8 @@ def _registry_tab(df: pd.DataFrame) -> None:
     st.markdown("### 3단계 실행 등록")
     runs = experiments.load_runs()
     if runs.empty:
-        st.info("등록할 실행이 없습니다. **3. 모델 개발·평가**에서 모델을 학습하세요.", icon="🧪")
+        st.info("등록할 실행이 없습니다. 3단계에서 모델을 먼저 학습하세요.", icon="🧪")
+        st.page_link(guide.PAGE_MODELING, label="3단계 모델 개발·평가로 이동", icon="➡️")
     else:
         registered = set(frame["run_id"].astype(str)) if not frame.empty else set()
         options = [r for r in runs["run_id"].astype(str) if r not in registered]
@@ -184,6 +189,7 @@ def _inference_tab(df: pd.DataFrame) -> None:
     )
     if df.empty:
         st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     usable = serving.selectable_versions()
@@ -556,6 +562,7 @@ def _trace_tab(df: pd.DataFrame) -> None:
     )
     if df.empty:
         st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     log = monitoring.load_log()
@@ -655,6 +662,7 @@ def _scenario_tab(df: pd.DataFrame) -> None:
             "시나리오를 돌릴 수 있습니다.",
             icon="⚠️",
         )
+        st.page_link(guide.PAGE_MODELING, label="3단계에서 모델 학습하기", icon="➡️")
         return
     if df.empty:
         st.warning("등록된 이미지가 없습니다. 1단계에서 데이터를 먼저 등록하세요.", icon="⚠️")

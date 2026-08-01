@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, evaluate, labeling, storage
+from vision_ai import config, datasets, evaluate, guide, labeling, storage
 
 STAGES = [
     {
@@ -57,6 +57,40 @@ def _load_validation() -> dict | None:
         return json.loads(VALIDATION_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _render_next_step(manifest: pd.DataFrame) -> None:
+    """지금 어디까지 왔고 다음에 무엇을 할지 보여준다.
+
+    처음 들어온 사람이 페이지 5개와 탭 20여 개 중 어디부터 눌러야 할지 알 수 있게 하는 것이
+    목적이다. 판단은 `guide`가 하고 여기서는 표시만 한다.
+    """
+    steps = guide.pipeline_steps(manifest=manifest)
+    done, total = guide.progress(steps)
+    upcoming = guide.next_step(steps)
+
+    st.subheader("진행 순서")
+    st.progress(done / total, text=f"{done}/{total} 완료")
+
+    if upcoming is None:
+        st.success(
+            "전 과정을 한 바퀴 돌았습니다. 이제 **4단계**에서 드리프트와 성능 추이를 살펴보거나, "
+            "**3단계**로 돌아가 모델을 개선할 수 있습니다.",
+            icon="🎉",
+        )
+    else:
+        with st.container(border=True):
+            st.markdown(f"#### 👉 다음: {upcoming.title}")
+            st.caption(f"{upcoming.where} · 현재 상태: {upcoming.detail}")
+            if upcoming.action:
+                st.markdown(upcoming.action)
+            st.page_link(upcoming.page, label=f"{upcoming.stage}단계로 이동", icon="➡️")
+
+    with st.expander("전체 순서 보기", expanded=upcoming is None):
+        for step in steps:
+            mark = "✅" if step.done else ("👉" if step is upcoming else "⬜")
+            st.markdown(f"{mark} **{step.title}** — {step.detail}  \n　　<sub>{step.where}</sub>",
+                        unsafe_allow_html=True)
 
 
 def _render_validation() -> None:
@@ -151,11 +185,9 @@ def render() -> None:
 
     if stats["total"] == 0:
         default = datasets.default_dataset()
-        st.info(
-            f"아직 수집된 이미지가 없습니다. **1. 데이터 수집** 화면에서 시작하세요.\n\n"
+        st.caption(
             f"기본 예시 데이터셋은 **{default.name}**({default.license})입니다. "
-            "아직 내려받지 않았다면 *합성 샘플 생성* 탭으로 전체 파이프라인을 먼저 시험해 볼 수 있습니다.",
-            icon="👉",
+            "내려받지 않았어도 합성 샘플로 전 과정을 시험할 수 있습니다."
         )
     else:
         label_stats = labeling.stats(labeling.resolve(df))
@@ -167,7 +199,11 @@ def render() -> None:
         cols[3].metric("분할 배정", f"{label_stats['split_assigned']:,}")
 
     st.divider()
-    st.subheader("단계별 진행 현황")
+    _render_next_step(df)
+
+    st.divider()
+    st.subheader("기능별 구현 현황")
+    st.caption("아래는 앱에 구현된 기능 목록이다. 내가 어디까지 했는지는 위의 진행 순서를 본다.")
     for stage in STAGES:
         badge = STATUS_BADGE.get(stage["status"], "⬜")
         with st.container(border=True):

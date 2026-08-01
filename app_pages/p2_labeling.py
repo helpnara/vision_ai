@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, labeling, storage, viz
+from vision_ai import config, guide, labeling, storage, viz
 
 # 라벨을 기록하면 큐에서 빠지는 모드 (커서를 그대로 두면 다음 항목이 올라온다)
 _DRAINING_MODES = frozenset({"unlabeled", "unspecified", "unmapped"})
@@ -33,7 +33,8 @@ def _cursor_key(mode: str, category: str) -> str:
 
 def _review_tab(resolved: pd.DataFrame) -> None:
     if resolved.empty:
-        st.info("수집된 이미지가 없습니다. **1. 데이터 수집**에서 먼저 등록하세요.", icon="📥")
+        st.info("수집된 이미지가 없습니다. 1단계에서 먼저 등록하세요.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     col1, col2 = st.columns([2, 1])
@@ -204,6 +205,7 @@ def _verify_tab(resolved: pd.DataFrame) -> None:
     )
     if resolved.empty:
         st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     pending = resolved[
@@ -324,6 +326,7 @@ def _split_tab(resolved: pd.DataFrame) -> None:
     )
     if resolved.empty:
         st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     col1, col2, col3, col4 = st.columns(4)
@@ -395,6 +398,7 @@ def _status_tab(resolved: pd.DataFrame) -> None:
     stats = labeling.stats(resolved)
     if stats["total"] == 0:
         st.info("수집된 이미지가 없습니다.", icon="📥")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
         return
 
     cols = st.columns(5)

@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, ingest, quality, storage
+from vision_ai import config, datasets, glossary, ingest, quality, storage
 
 FIT_STARS = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2: "★★☆☆☆", 1: "★☆☆☆☆"}
 
@@ -350,8 +350,14 @@ def _status_tab() -> None:
     flagged = df[df["note"].astype(str).str.contains("blurry|exposed|low_resolution", na=False)]
     q1, q2, q3 = st.columns(3)
     q1.metric("품질 경고", f"{len(flagged):,}")
-    q2.metric("평균 선명도(Laplacian)", f"{df['blur_score'].mean():.1f}")
-    q3.metric("평균 밝기", f"{df['brightness'].mean():.1f}")
+    q2.metric("평균 선명도(Laplacian)", f"{df['blur_score'].mean():.1f}",
+          help=glossary.detail("blur_score"))
+    q3.metric("평균 밝기", f"{df['brightness'].mean():.1f}",
+          help=glossary.detail("brightness"))
+    st.caption(
+        f"{glossary.caption('blur_score')} {glossary.caption('brightness')} "
+        f"{glossary.ARBITRARY['quality']}"
+    )
     if not flagged.empty:
         with st.expander(f"경고 이미지 {len(flagged):,}건 보기"):
             view = flagged[["image_id", "category", "label", "width", "height", "blur_score", "brightness", "note"]].copy()

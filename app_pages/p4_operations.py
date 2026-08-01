@@ -11,6 +11,7 @@ from vision_ai import (
     config,
     experiments,
     features,
+    glossary,
     guide,
     labeling,
     monitoring,
@@ -351,7 +352,7 @@ def _drift_tab(df: pd.DataFrame) -> None:
     cols = st.columns(4)
     cols[0].metric("검사 표본", f"{summary['n_current']:,}")
     cols[1].metric("판정", summary["level"])
-    cols[2].metric("변화 특징", f"{summary['shifted']:,}")
+    cols[2].metric("변화 특징", f"{summary['shifted']:,}", help=glossary.detail("psi"))
     cols[3].metric(
         "평균 PSI", f"{summary['mean_psi']:.3f}" if np.isfinite(summary["mean_psi"]) else "—"
     )
@@ -373,10 +374,14 @@ def _drift_tab(df: pd.DataFrame) -> None:
     else:
         st.success("입력 분포가 안정적입니다.", icon="✅")
 
+    st.caption(glossary.caption("psi"))
     st.caption(
         f"PSI 해석: {monitoring.PSI_STABLE} 이하 안정 · "
         f"{monitoring.PSI_STABLE}~{monitoring.PSI_SHIFTED} 주의 · {monitoring.PSI_SHIFTED} 초과 변화"
     )
+    with st.expander("이 기준은 어디서 왔나"):
+        st.markdown(f"- {glossary.ARBITRARY['psi']}")
+        st.markdown(f"- {glossary.ARBITRARY['drift_samples']}")
 
     st.divider()
     st.markdown("**특징별 분포 이동 (PSI 상위)**")
@@ -522,6 +527,11 @@ def _retraining_tab(df: pd.DataFrame) -> None:
     margin = col2.slider(
         "허용 재현율 낙폭", 0.01, 0.30, 0.05, 0.01, key="p4_rt_margin",
         help="등록 시 재현율 대비 이보다 더 떨어지면 경보를 낸다.",
+    )
+
+    st.caption(
+        f"{glossary.ARBITRARY['new_labels']} {glossary.ARBITRARY['recall_margin']} "
+        "위 두 값은 화면에서 바로 바꿔 볼 수 있습니다."
     )
 
     decision = monitoring.retraining_signals(

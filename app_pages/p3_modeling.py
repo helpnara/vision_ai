@@ -12,6 +12,7 @@ from vision_ai import (
     evaluate,
     experiments,
     features,
+    glossary,
     guide,
     labeling,
     models,
@@ -644,16 +645,29 @@ def _run_claude(df: pd.DataFrame, candidates: pd.DataFrame, *, effort: str) -> N
 # --- 5) 평가 리포트 -----------------------------------------------------------
 
 def _metric_row(metrics: dict) -> None:
-    cols = st.columns(5)
-    cols[0].metric("재현율", f"{metrics['recall']:.3f}", help="실제 결함 중 잡아낸 비율 — 최우선 지표")
-    cols[1].metric("정밀도", f"{metrics['precision']:.3f}")
-    cols[2].metric("F1", f"{metrics['f1']:.3f}")
+    """지표를 표시한다.
+
+    핵심 지표는 캡션으로 **바로 보이게** 하고, 부가 설명은 `?` 아이콘에 둔다.
+    눌러야 보이는 설명은 초보자가 그냥 지나치기 때문이다. 문구는 `glossary`에 모아 두어
+    다른 화면과 어긋나지 않게 한다.
+    """
     auroc = metrics.get("auroc")
-    cols[3].metric("AUROC", f"{auroc:.3f}" if auroc == auroc else "—")
-    cols[4].metric("미탐 / 오탐", f"{metrics['fn']} / {metrics['fp']}")
+    items = [
+        ("recall", "재현율", f"{metrics['recall']:.3f}"),
+        ("precision", "정밀도", f"{metrics['precision']:.3f}"),
+        ("f1", "F1", f"{metrics['f1']:.3f}"),
+        ("auroc", "AUROC", f"{auroc:.3f}" if auroc == auroc else "—"),
+        ("miss_fp", "미탐 / 오탐", f"{metrics['fn']} / {metrics['fp']}"),
+    ]
+    cols = st.columns(len(items))
+    for col, (key, label, value) in zip(cols, items):
+        col.metric(label, value, help=glossary.detail(key))
+        caption = glossary.caption(key)
+        if caption:
+            col.caption(caption)
 
 
-def _business_impact(metrics: dict) -> None:
+def _business_impact(metrics: dict) -> dict:
     """성능 지표를 "사람이 볼 물량이 얼마나 줄어드는가"로 바꿔 보여준다.
 
     AUROC나 정밀도만 보면 이 도구를 도입할지 판단할 수 없다. 게다가 여기 평가 데이터는
@@ -679,18 +693,15 @@ def _business_impact(metrics: dict) -> None:
     impact = evaluate.business_impact(recall, fpr, prevalence=prevalence, volume=volume)
 
     cols = st.columns(3)
-    cols[0].metric(
-        "검수량 절감", f"{impact['reduction_ratio']:.0%}",
-        help="전수 검수 대비 사람이 안 봐도 되는 비율. 이 도구의 실제 효용이다.",
-    )
-    cols[1].metric(
-        "놓치는 결함", f"{impact['missed']:.0f}건",
-        help="절감의 대가. 이 값을 받아들일 수 있는지가 도입 판단의 핵심이다.",
-    )
+    cols[0].metric("검수량 절감", f"{impact['reduction_ratio']:.0%}", help=glossary.detail("reduction"))
+    cols[0].caption(glossary.caption("reduction"))
+    cols[1].metric("놓치는 결함", f"{impact['missed']:.0f}건", help=glossary.detail("missed"))
+    cols[1].caption(glossary.caption("missed"))
     cols[2].metric(
         "현장 기대 정밀도", f"{impact['precision']:.1%}",
-        help="위 표의 정밀도는 평가 데이터 구성 기준이라 현장과 다르다.",
+        help="위 표의 정밀도는 평가 데이터 구성 기준이라 현장과 다릅니다.",
     )
+    cols[2].caption("위에서 본 정밀도를 실제 불량률로 환산한 값입니다.")
 
     st.info(
         f"**{volume:,}장을 검사하면** — 결함 {impact['defects']:.0f}건 중 "
@@ -723,6 +734,22 @@ def _business_impact(metrics: dict) -> None:
             if "장당" in column:
                 display[column] = display[column].map(lambda v: f"{v:,.0f}")
         st.dataframe(display, hide_index=True, width="stretch")
+    return impact
+
+
+def _verdict(metrics: dict, impact: dict, target_recall: float) -> None:
+    """숫자를 보여주고 끝내지 않고, 쓸 만한지와 다음에 무엇을 할지 문장으로 말해준다."""
+    result = glossary.verdict(metrics, impact, target_recall=target_recall)
+    render = {
+        glossary.LEVEL_GOOD: (st.success, "✅"),
+        glossary.LEVEL_USABLE: (st.info, "💡"),
+        glossary.LEVEL_WEAK: (st.warning, "⚠️"),
+    }[result.level]
+    render[0](f"**{result.headline}**", icon=render[1])
+    if result.actions:
+        st.markdown("**다음에 할 일**")
+        for action in result.actions:
+            st.markdown(f"- {action}")
 
 
 def _report_tab(df: pd.DataFrame) -> None:
@@ -744,7 +771,11 @@ def _report_tab(df: pd.DataFrame) -> None:
 
     st.divider()
     st.markdown("### 임계값 조정")
-    st.caption("임계값을 낮추면 미탐이 줄고 오탐이 늘어난다. 이 트레이드오프를 직접 보고 정한다.")
+    st.caption(
+        "임계값은 **어느 점수부터 결함으로 볼지** 정하는 값입니다. "
+        "낮추면 결함을 더 많이 잡지만(재현율 ↑) 정상품도 함께 걸립니다(오탐 ↑). "
+        "한쪽만 좋게 만들 수는 없습니다 — 어디서 타협할지를 고르는 것입니다."
+    )
     low, high = float(np.min(scores)), float(np.max(scores))
     if high <= low:
         high = low + 1e-6
@@ -755,7 +786,8 @@ def _report_tab(df: pd.DataFrame) -> None:
     metrics = evaluate.summarize(y, scores, threshold)
     _metric_row(metrics)
 
-    _business_impact(metrics)
+    impact = _business_impact(metrics)
+    _verdict(metrics, impact, float(result.get("settings", {}).get("target_recall", 0.95)))
 
     left, right = st.columns(2)
     with left:

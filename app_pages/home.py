@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, labeling, storage
+from vision_ai import config, datasets, evaluate, labeling, storage
 
 STAGES = [
     {
@@ -105,17 +105,24 @@ def _render_validation() -> None:
         )
 
     if scored:
-        # 재현율·오탐률은 불량률과 무관한 모델 특성이므로 임의의 불량률로 환산할 수 있다.
-        hit = mean_recall * ASSUMED_PREVALENCE
-        alarm = mean_fpr * (1 - ASSUMED_PREVALENCE)
-        precision = hit / (hit + alarm) if (hit + alarm) else 0.0
-        reviewed = hit + alarm
+        # 환산 로직은 evaluate에 한 곳으로 모아 뒀다 (3단계 평가 화면과 같은 계산).
+        impact = evaluate.business_impact(
+            mean_recall, mean_fpr, prevalence=ASSUMED_PREVALENCE, volume=1000
+        )
+        cols = st.columns(2)
+        cols[0].metric(
+            "검수량 절감", f"{impact['reduction_ratio']:.0%}",
+            help=f"불량률 {ASSUMED_PREVALENCE:.0%} 가정. 전수 검수 대비 사람이 안 봐도 되는 비율입니다.",
+        )
+        cols[1].metric(
+            "1,000장당 놓치는 결함", f"{impact['missed']:.0f}건",
+            help="절감의 대가입니다. 이 값을 받아들일 수 있는지가 도입 판단의 핵심입니다.",
+        )
         st.warning(
-            f"위 정밀도는 **정상:결함 = 1:1인 시험 구성** 기준이라 현장 기대치가 아닙니다. "
-            f"불량률을 {ASSUMED_PREVALENCE:.0%}로 가정하면 기대 정밀도는 **{precision:.1%}** 로 떨어집니다. "
-            f"따라서 이 모델은 자동 판정용이 아니라 **1차 스크리닝용**입니다 — "
-            f"미탐을 {1 - mean_recall:.1%}로 누르면서 사람이 볼 물량을 "
-            f"**{1 - reviewed:.0%}** 줄여 주는 것이 실제 효용입니다.",
+            f"위 표의 정밀도는 **정상:결함 = 1:1인 시험 구성** 기준이라 현장 기대치가 아닙니다. "
+            f"불량률을 {ASSUMED_PREVALENCE:.0%}로 가정하면 기대 정밀도는 "
+            f"**{impact['precision']:.1%}** 로 떨어집니다. 따라서 이 모델은 자동 판정용이 아니라 "
+            f"**1차 스크리닝용**입니다 — 사람이 볼 물량을 줄여 주는 것이 실제 효용입니다.",
             icon="⚠️",
         )
     st.caption(

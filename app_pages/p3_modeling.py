@@ -596,6 +596,78 @@ def _metric_row(metrics: dict) -> None:
     cols[4].metric("미탐 / 오탐", f"{metrics['fn']} / {metrics['fp']}")
 
 
+def _business_impact(metrics: dict) -> None:
+    """성능 지표를 "사람이 볼 물량이 얼마나 줄어드는가"로 바꿔 보여준다.
+
+    AUROC나 정밀도만 보면 이 도구를 도입할지 판단할 수 없다. 게다가 여기 평가 데이터는
+    정상:결함 비율이 실제 라인과 달라서, 화면의 정밀도를 그대로 믿으면 크게 과대평가한다.
+    """
+    recall = float(metrics.get("recall", 0.0))
+    fpr = float(metrics.get("false_alarm_rate", 0.0))
+
+    st.divider()
+    st.markdown("### 이 모델을 쓰면 무엇이 좋아지는가")
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+    prevalence = col1.number_input(
+        "가정 불량률 (%)", 0.1, 50.0, evaluate.DEFAULT_PREVALENCE * 100, 0.1,
+        key="p3_rep_prevalence",
+        help="실제 라인에서 100개 중 몇 개가 불량인지. 모르면 1%로 두고 본다.",
+    ) / 100.0
+    volume = int(col2.number_input(
+        "검사 물량 (장)", 100, 1_000_000, 1000, 100, key="p3_rep_volume",
+        help="이 물량을 기준으로 건수를 환산한다.",
+    ))
+
+    impact = evaluate.business_impact(recall, fpr, prevalence=prevalence, volume=volume)
+
+    cols = st.columns(3)
+    cols[0].metric(
+        "검수량 절감", f"{impact['reduction_ratio']:.0%}",
+        help="전수 검수 대비 사람이 안 봐도 되는 비율. 이 도구의 실제 효용이다.",
+    )
+    cols[1].metric(
+        "놓치는 결함", f"{impact['missed']:.0f}건",
+        help="절감의 대가. 이 값을 받아들일 수 있는지가 도입 판단의 핵심이다.",
+    )
+    cols[2].metric(
+        "현장 기대 정밀도", f"{impact['precision']:.1%}",
+        help="위 표의 정밀도는 평가 데이터 구성 기준이라 현장과 다르다.",
+    )
+
+    st.info(
+        f"**{volume:,}장을 검사하면** — 결함 {impact['defects']:.0f}건 중 "
+        f"**{impact['caught']:.0f}건을 잡고 {impact['missed']:.0f}건을 놓친다.** "
+        f"사람이 볼 물량은 {volume:,}장에서 **{impact['reviewed']:.0f}장으로 줄어든다** "
+        f"(그중 오탐 {impact['false_alarms']:.0f}건을 걸러내야 한다).",
+        icon="💡",
+    )
+
+    if impact["precision"] < 0.5:
+        st.warning(
+            f"불량률 {prevalence:.1%}에서 기대 정밀도가 **{impact['precision']:.1%}** 다. "
+            "즉 **자동 판정용으로는 쓸 수 없고**, 사람 검수 부하를 줄이는 "
+            "**1차 스크리닝용**으로 봐야 한다. 모델이 올린 것은 사람이 다시 확인해야 한다.",
+            icon="⚠️",
+        )
+
+    with st.expander("불량률이 달라지면 (정밀도가 왜 이렇게 떨어지는가)"):
+        st.caption(
+            "재현율과 오탐률은 불량률과 무관한 모델 고유 특성이다. 반면 정밀도는 불량률에 따라 "
+            "크게 달라진다. 결함이 드물수록 정상품이 압도적으로 많아져, 같은 오탐률이라도 "
+            "오탐 건수가 진짜 결함 건수를 쉽게 넘어서기 때문이다."
+        )
+        table = evaluate.impact_by_prevalence(recall, fpr, volume=volume)
+        display = table.copy()
+        display["불량률"] = display["불량률"].map(lambda v: f"{v:.0%}")
+        for column in ("기대 정밀도", "검수 비율", "검수량 절감률"):
+            display[column] = display[column].map(lambda v: f"{v:.1%}")
+        for column in display.columns:
+            if "장당" in column:
+                display[column] = display[column].map(lambda v: f"{v:,.0f}")
+        st.dataframe(display, hide_index=True, width="stretch")
+
+
 def _report_tab(df: pd.DataFrame) -> None:
     result = st.session_state.get(_RESULT_KEY)
     if result is None:
@@ -621,6 +693,8 @@ def _report_tab(df: pd.DataFrame) -> None:
     )
     metrics = evaluate.summarize(y, scores, threshold)
     _metric_row(metrics)
+
+    _business_impact(metrics)
 
     left, right = st.columns(2)
     with left:

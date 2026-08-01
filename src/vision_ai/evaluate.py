@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import numpy as np
 import pandas as pd
 
@@ -109,6 +111,107 @@ def summarize(y_true, scores, threshold: float) -> dict:
     result["auroc"] = auroc(y_true, scores)
     result["average_precision"] = average_precision(y_true, scores)
     return result
+
+
+# --- 업무 효과 환산 --------------------------------------------------------
+#
+# AUROC 0.83 같은 값은 현업에도 결정권자에게도 와닿지 않는다. 이 도구가 실제로 주는 것은
+# "전수 검수 대비 사람이 볼 물량이 얼마나 줄어드는가"이므로, 그 숫자로 바꿔서 보여준다.
+#
+# 재현율(TPR)과 오탐률(FPR)은 불량률과 무관한 모델 고유 특성이다. 반면 정밀도는 불량률에
+# 따라 크게 달라진다. 시험 구성(정상:결함 = 1:1)에서 나온 정밀도를 현장 기대치로 읽으면
+# 크게 과대평가하게 되므로, 불량률을 명시해 환산한다.
+
+# 현장 불량률의 기본 가정. 실제 라인은 보통 이보다 낮거나 비슷하다.
+DEFAULT_PREVALENCE = 0.01
+
+
+def precision_at_prevalence(recall: float, false_alarm_rate: float, prevalence: float) -> float:
+    """불량률이 주어졌을 때 기대되는 정밀도."""
+    hit = recall * prevalence
+    alarm = false_alarm_rate * (1.0 - prevalence)
+    total = hit + alarm
+    return float(hit / total) if total else 0.0
+
+
+def review_load(recall: float, false_alarm_rate: float, prevalence: float) -> float:
+    """전체 중 사람이 확인해야 하는 비율 (모델이 결함이라고 올린 것)."""
+    return float(recall * prevalence + false_alarm_rate * (1.0 - prevalence))
+
+
+def business_impact(
+    recall: float,
+    false_alarm_rate: float,
+    *,
+    prevalence: float = DEFAULT_PREVALENCE,
+    volume: int = 1000,
+) -> dict:
+    """모델 지표를 업무 언어로 바꾼다.
+
+    **절감만 말하면 안 된다.** 검수량을 줄이는 대가로 결함을 놓치므로, 놓치는 건수를
+    항상 함께 낸다. 둘을 같이 봐야 도입 여부를 판단할 수 있다.
+
+    Args:
+        recall: 재현율 (실제 결함 중 잡아낸 비율)
+        false_alarm_rate: 오탐률 (실제 정상 중 결함으로 잘못 올린 비율)
+        prevalence: 가정 불량률
+        volume: 검사 물량 (이 물량 기준으로 건수를 환산한다)
+
+    Returns:
+        reviewed_ratio  : 사람이 볼 비율
+        reduction_ratio : 전수 검수 대비 줄어드는 비율
+        precision       : 이 불량률에서의 기대 정밀도
+        defects         : 물량 중 실제 결함 건수
+        caught / missed : 잡는 결함 / 놓치는 결함 건수
+        reviewed / saved: 사람이 볼 건수 / 안 봐도 되는 건수
+        false_alarms    : 사람이 걸러내야 할 오탐 건수
+    """
+    recall = float(recall)
+    false_alarm_rate = float(false_alarm_rate)
+    reviewed_ratio = review_load(recall, false_alarm_rate, prevalence)
+
+    defects = volume * prevalence
+    normals = volume * (1.0 - prevalence)
+    caught = defects * recall
+    false_alarms = normals * false_alarm_rate
+
+    return {
+        "prevalence": float(prevalence),
+        "volume": int(volume),
+        "reviewed_ratio": reviewed_ratio,
+        "reduction_ratio": float(1.0 - reviewed_ratio),
+        "precision": precision_at_prevalence(recall, false_alarm_rate, prevalence),
+        "defects": defects,
+        "caught": caught,
+        "missed": defects - caught,
+        "reviewed": volume * reviewed_ratio,
+        "saved": volume * (1.0 - reviewed_ratio),
+        "false_alarms": false_alarms,
+    }
+
+
+def impact_by_prevalence(
+    recall: float,
+    false_alarm_rate: float,
+    prevalences: Sequence[float] = (0.50, 0.10, 0.05, 0.01),
+    *,
+    volume: int = 1000,
+) -> pd.DataFrame:
+    """불량률을 바꿔가며 효과가 어떻게 달라지는지 표로 만든다."""
+    rows = []
+    for prevalence in prevalences:
+        impact = business_impact(recall, false_alarm_rate, prevalence=prevalence, volume=volume)
+        rows.append(
+            {
+                "불량률": prevalence,
+                "기대 정밀도": impact["precision"],
+                "검수 비율": impact["reviewed_ratio"],
+                "검수량 절감률": impact["reduction_ratio"],
+                f"{volume:,}장당 검수": impact["reviewed"],
+                f"{volume:,}장당 놓침": impact["missed"],
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def error_frame(

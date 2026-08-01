@@ -584,3 +584,58 @@ def test_end_to_end_anomaly_localizes_on_pcb(pcb_dataset):
 
     assert hits, "마스크가 있는 결함 이미지가 있어야 한다"
     assert np.mean(hits) >= 0.5, f"최고점 명중률이 너무 낮다: {np.mean(hits)}"
+
+
+# --- 업무 효과 환산 --------------------------------------------------------
+
+def test_precision_falls_as_defects_get_rarer():
+    """같은 모델이라도 불량률이 낮아지면 정밀도는 떨어진다 — 오탐의 모수가 커지기 때문."""
+    high = evaluate.precision_at_prevalence(0.95, 0.10, 0.50)
+    low = evaluate.precision_at_prevalence(0.95, 0.10, 0.01)
+    assert high > low
+    assert low < 0.15
+
+
+def test_precision_matches_hand_calculation():
+    # 불량률 10%, 재현율 0.8, 오탐률 0.2 → TP=0.08, FP=0.18 → 0.08/0.26
+    assert evaluate.precision_at_prevalence(0.8, 0.2, 0.10) == pytest.approx(0.08 / 0.26)
+
+
+def test_perfect_model_reviews_only_the_defects():
+    """오탐이 없으면 검수 대상은 결함뿐이고, 절감률은 (1 - 불량률)이 된다."""
+    impact = evaluate.business_impact(1.0, 0.0, prevalence=0.02, volume=1000)
+    assert impact["reviewed_ratio"] == pytest.approx(0.02)
+    assert impact["reduction_ratio"] == pytest.approx(0.98)
+    assert impact["missed"] == pytest.approx(0.0)
+    assert impact["precision"] == pytest.approx(1.0)
+
+
+def test_impact_reports_missed_defects_alongside_savings():
+    """절감만 보여주면 안 된다 — 놓치는 결함을 함께 내야 판단할 수 있다."""
+    impact = evaluate.business_impact(0.90, 0.30, prevalence=0.01, volume=10_000)
+    assert impact["defects"] == pytest.approx(100)
+    assert impact["caught"] == pytest.approx(90)
+    assert impact["missed"] == pytest.approx(10)
+    # 검수 대상 = 잡은 결함 + 오탐
+    assert impact["reviewed"] == pytest.approx(impact["caught"] + impact["false_alarms"])
+
+
+def test_useless_model_that_flags_everything_saves_nothing():
+    impact = evaluate.business_impact(1.0, 1.0, prevalence=0.01, volume=1000)
+    assert impact["reviewed_ratio"] == pytest.approx(1.0)
+    assert impact["reduction_ratio"] == pytest.approx(0.0)
+
+
+def test_measured_visa_numbers_reproduce_documented_impact():
+    """문서에 적은 '불량률 1%에서 검수량 54% 절감'이 실제로 재현되는지 고정한다."""
+    impact = evaluate.business_impact(0.925, 0.455, prevalence=0.01, volume=1000)
+    assert impact["reduction_ratio"] == pytest.approx(0.54, abs=0.01)
+    assert impact["precision"] == pytest.approx(0.02, abs=0.005)
+
+
+def test_impact_by_prevalence_orders_rows_and_keeps_columns():
+    frame = evaluate.impact_by_prevalence(0.9, 0.2, (0.5, 0.1, 0.01))
+    assert len(frame) == 3
+    assert list(frame["불량률"]) == [0.5, 0.1, 0.01]
+    # 불량률이 낮아질수록 정밀도는 단조 감소한다
+    assert frame["기대 정밀도"].is_monotonic_decreasing

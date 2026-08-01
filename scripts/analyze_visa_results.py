@@ -20,15 +20,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from vision_ai import evaluate  # noqa: E402
 
 PREVALENCES = (0.50, 0.10, 0.05, 0.01)
 
-
-def precision_at(tpr: float, fpr: float, prevalence: float) -> float:
-    hit = tpr * prevalence
-    alarm = fpr * (1.0 - prevalence)
-    return hit / (hit + alarm) if (hit + alarm) else 0.0
+# 환산 로직은 `vision_ai.evaluate`에 한 곳으로 모아 두었다 — 앱 화면과 같은 계산을 써야
+# 문서의 숫자와 화면의 숫자가 어긋나지 않는다.
+precision_at = evaluate.precision_at_prevalence
 
 
 def main() -> int:
@@ -92,11 +97,11 @@ def main() -> int:
         print("\n### 평균 기준 해석\n")
         print(f"- 재현율 {mean_tpr:.1%}, 오탐률 {mean_fpr:.1%}")
         for p in PREVALENCES:
-            precision = precision_at(mean_tpr, mean_fpr, p)
-            per_1000 = mean_fpr * (1 - p) * 1000
+            impact = evaluate.business_impact(mean_tpr, mean_fpr, prevalence=p, volume=1000)
             print(
-                f"- 불량률 {p:.0%}: 정밀도 {precision:.1%} — "
-                f"1,000장 검사 시 오탐 약 {per_1000:.0f}건을 사람이 걸러내야 한다"
+                f"- 불량률 {p:.0%}: 정밀도 {impact['precision']:.1%} · "
+                f"검수량 절감 {impact['reduction_ratio']:.0%} — 1,000장 검사 시 "
+                f"오탐 {impact['false_alarms']:.0f}건을 걸러내고 결함 {impact['missed']:.0f}건을 놓친다"
             )
 
     print("\n## 3. 판정\n")

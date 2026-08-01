@@ -194,3 +194,23 @@ def test_measured_visa_model_would_be_flagged_on_promotion():
     """실측 모델(재현율 0.925)은 기준 미달이므로 경고가 떠야 한다."""
     check = glossary.promotion_check({"recall": 0.925}, _impact(0.925, 0.455))
     assert not check.passed
+
+
+# --- 용어 평문화 (B4) -------------------------------------------------------
+
+def test_jargon_terms_are_explained_without_more_jargon():
+    """설명에 또 다른 전문 용어를 쓰면 평문화가 아니다."""
+    forbidden = ("마할라노비스", "PSI", "AUROC", "분위", "공분산")
+    for name, text in glossary.TERMS.items():
+        assert text.strip(), f"{name} 설명이 비어 있습니다"
+        for word in forbidden:
+            assert word not in text, f"{name} 설명에 전문 용어 '{word}'가 있습니다"
+
+
+def test_core_screen_terms_are_covered():
+    for name in ("이상탐지", "베이스라인", "층화 분할", "레지스트리", "드리프트", "임계값"):
+        assert glossary.term(name), f"{name}이 용어집에 없습니다"
+
+
+def test_unknown_term_returns_empty():
+    assert glossary.term("없는용어") == ""

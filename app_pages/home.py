@@ -7,7 +7,9 @@ import json
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, evaluate, guide, labeling, storage
+from vision_ai import (
+    config, datasets, evaluate, glossary, guide, labeling, quickstart, storage,
+)
 
 STAGES = [
     {
@@ -57,6 +59,57 @@ def _load_validation() -> dict | None:
         return json.loads(VALIDATION_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _render_quickstart(manifest: pd.DataFrame) -> None:
+    """한 번에 데모 상태까지 만든다.
+
+    처음 연 사람이 운영 화면을 보려면 1단계 안쪽 탭부터 4단계 승격까지 순서대로 찾아
+    들어가야 한다. 시연이 목적이라면 그 자체가 장벽이다.
+    """
+    if not manifest.empty:
+        return   # 이미 데이터가 있으면 진행 순서 안내만으로 충분하다
+
+    with st.container(border=True):
+        st.markdown("#### ⚡ 처음이라면 — 한 번에 시작하기")
+        st.caption(
+            "합성 샘플 생성 → 분할 → 학습 → 승격까지 한 번에 밟아, "
+            "**4단계 운영 시연을 곧바로 누를 수 있는 상태**로 만듭니다. "
+            "다운로드도 설정도 필요 없습니다."
+        )
+        if st.button("⚡ 데모 한 바퀴 만들기", type="primary", key="home_quickstart"):
+            bar = st.progress(0.0, text="준비 중...")
+
+            def on_progress(index: int, total: int, name: str) -> None:
+                bar.progress(index / total, text=f"{name}... ({index}/{total})")
+
+            with st.spinner("데모를 만드는 중입니다. 1분쯤 걸립니다..."):
+                result = quickstart.run(progress=on_progress)
+            bar.empty()
+
+            for warning in result.warnings:
+                st.warning(warning, icon="⚠️")
+            if result.ok:
+                st.success(
+                    f"준비 완료 — **{result.version}** 을 서비스 중으로 올렸습니다 "
+                    f"(이미지 {result.n_images:,}장 / 학습 {result.n_train:,}장). "
+                    "이제 **4단계 → 운영 시나리오 시연**을 눌러 보세요.",
+                    icon="✅",
+                )
+                st.rerun()
+        st.caption(
+            "여기서 만든 것은 **합성 샘플**입니다. 결함이 인위적으로 뚜렷해 지표가 실제보다 "
+            "높게 나오므로 성능 근거로 쓰면 안 됩니다."
+        )
+
+
+def _render_deployment_note() -> None:
+    """배포본에서 데이터가 사라진다는 점을 앱 안에서도 알린다 (README에만 있으면 못 본다)."""
+    st.caption(
+        f"데이터 저장 위치: `{config.DATA_ROOT}` — git 추적 대상이 아닙니다. "
+        "**무료 배포 환경에서는 컨테이너가 재시작되면 수집 이미지·라벨·모델·판정 이력이 "
+        "모두 사라집니다.** 실제 라벨링과 학습은 내려받아 로컬에서 실행하세요."
+    )
 
 
 def _render_next_step(manifest: pd.DataFrame) -> None:
@@ -199,6 +252,7 @@ def render() -> None:
         cols[3].metric("분할 배정", f"{label_stats['split_assigned']:,}")
 
     st.divider()
+    _render_quickstart(df)
     _render_next_step(df)
 
     st.divider()
@@ -216,6 +270,8 @@ def render() -> None:
     _render_validation()
 
     st.divider()
+    _render_deployment_note()
+
     with st.expander("데이터 사용 원칙", expanded=False):
         st.markdown(
             "- **사내(회사) 결함 데이터는 사용하지 않는다.** 공개 데이터셋과 직접 촬영 이미지만 사용한다.\n"
@@ -223,6 +279,11 @@ def render() -> None:
             "사용 전 원본 배포 페이지에서 조건을 직접 확인한다.\n"
             f"- 데이터 루트: `{config.DATA_ROOT}` (git 추적 대상 아님)"
         )
+
+    with st.expander("용어 사전 — 화면에 나오는 말이 낯설다면", expanded=False):
+        st.caption("이 앱에 나오는 전문 용어를 한 줄씩 풀어 썼습니다.")
+        for name, text in glossary.TERMS.items():
+            st.markdown(f"- **{name}** — {text}")
 
     with st.expander("결함 유형 분류 체계 (표준 10종)", expanded=False):
         for key, label in config.DEFECT_TYPES.items():

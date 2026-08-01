@@ -426,9 +426,16 @@ def render() -> None:
         "manifest는 이후 모든 단계의 입력이 된다."
     )
 
+    # 탭이 5개인데 어디부터 눌러야 할지 표시가 없으면 초보자는 첫 탭부터 훑는다.
+    # 데이터가 없을 때는 가장 빠른 길(합성 샘플)을 가리키고, 채워지면 완료로 바꾼다.
+    has_data = not storage.load_manifest().empty
+    mark = "✅" if has_data else "👉"
     tabs = st.tabs(
-        ["🗂️ 오픈 데이터셋 카탈로그", "📁 로컬 폴더 임포트", "⬆️ 이미지 업로드", "🧪 합성 샘플 생성", "📊 수집 현황"]
+        ["🗂️ 오픈 데이터셋 카탈로그", "📁 로컬 폴더 임포트", "⬆️ 이미지 업로드",
+         f"{mark} 🧪 합성 샘플 생성", f"{'✅ ' if has_data else ''}📊 수집 현황"]
     )
+    if not has_data:
+        st.caption("👉 표시된 탭이 가장 빠른 시작점입니다. 다운로드 없이 전 과정을 시험할 수 있습니다.")
     with tabs[0]:
         _catalog_tab()
     with tabs[1]:

@@ -16,6 +16,9 @@ from vision_ai import (
     guide,
     labeling,
     models,
+    monitoring,
+    registry,
+    report,
     storage,
     viz,
 )
@@ -214,6 +217,7 @@ def _empty_state_links(df: pd.DataFrame) -> None:
 
 
 def _baseline_tab(df: pd.DataFrame) -> None:
+    st.caption(f"**베이스라인** — {glossary.term('베이스라인')}")
     st.markdown(
         "고전 CV 특징 + 분류기로 **성능 하한선**을 만든다. 무거운 모델 없이 곧바로 돌아가므로, "
         "이후 모델이 이보다 나은지 판단하는 기준이 된다."
@@ -329,6 +333,7 @@ def _baseline_tab(df: pd.DataFrame) -> None:
 # --- 3) 이상탐지 --------------------------------------------------------------
 
 def _anomaly_tab(df: pd.DataFrame) -> None:
+    st.caption(f"**이상탐지** — {glossary.term('이상탐지')}")
     st.markdown(
         "**정상 이미지만** 학습해 정상 분포를 만들고, 이탈 정도를 결함 점수로 쓴다. "
         "결함 샘플이 적은 상황(VisA의 기본 전제)에 맞고, 결함 **위치**까지 히트맵으로 낸다."
@@ -843,6 +848,28 @@ def _report_tab(df: pd.DataFrame) -> None:
         with st.expander("표로 보기"):
             st.dataframe(subset, hide_index=True, width="stretch")
 
+    st.divider()
+    st.markdown("### 결과 보고서")
+    st.caption(
+        "성능·업무 효과·판정·주의사항을 한 장으로 묶어 내려받습니다. "
+        "화면을 캡처해 옮겨 적지 않아도 됩니다."
+    )
+    st.download_button(
+        "📄 보고서 내려받기 (.md)",
+        data=report.build(
+            resolved=df, result=result, metrics=metrics,
+            prevalence=impact["prevalence"], volume=impact["volume"],
+            target_recall=float(result.get("settings", {}).get("target_recall", 0.95)),
+            production=registry.production(),
+            log=monitoring.load_log(),
+        ).encode("utf-8"),
+        file_name=report.filename(),
+        mime="text/markdown",
+        type="primary",
+        key="p3_report_download",
+    )
+
+    st.divider()
     st.download_button(
         "판정 결과 내려받기 (errors.csv)",
         errors.to_csv(index=False).encode("utf-8-sig"),

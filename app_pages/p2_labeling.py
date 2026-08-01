@@ -468,9 +468,22 @@ def render() -> None:
 
     resolved = labeling.resolve()
 
-    tabs = st.tabs(
-        ["🔍 라벨 검수", "✅ 폴더 라벨 검증", "🔀 결함 유형 정규화", "✂️ 데이터 분할", "📊 라벨 현황"]
+    # 2단계에서 반드시 해야 하는 것은 **데이터 분할**이다. 나머지는 데이터에 따라 건너뛸 수
+    # 있는데, 분할을 빼먹으면 3단계가 통째로 막힌다. 그래서 그 탭만 상태를 표시한다.
+    split_done = (
+        not resolved.empty
+        and (resolved["split"].astype(str) != config.SPLIT_NONE).any()
     )
+    split_mark = "✅" if split_done else "👉"
+    tabs = st.tabs(
+        ["🔍 라벨 검수", "✅ 폴더 라벨 검증", "🔀 결함 유형 정규화",
+         f"{split_mark} ✂️ 데이터 분할", "📊 라벨 현황"]
+    )
+    if not split_done:
+        st.caption(
+            "👉 **데이터 분할**은 건너뛸 수 없습니다. 학습용과 평가용을 나눠 두지 않으면 "
+            "3단계에서 학습을 시작할 수 없습니다."
+        )
     with tabs[0]:
         _review_tab(resolved)
     with tabs[1]:

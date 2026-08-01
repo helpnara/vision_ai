@@ -14,12 +14,14 @@ from vision_ai import (
     labeling,
     monitoring,
     registry,
+    scenario,
     serving,
     storage,
     viz,
 )
 
 _BATCH_KEY = "p4_batch"
+_SCENARIO_KEY = "p4_scenario"
 
 
 def _resolved() -> pd.DataFrame:
@@ -632,6 +634,126 @@ def _trace_tab(df: pd.DataFrame) -> None:
 
 # --- 페이지 -------------------------------------------------------------------
 
+def _scenario_tab(df: pd.DataFrame) -> None:
+    """운영 몇 달치를 재생해 나머지 탭이 작동하는 모습을 보이게 한다."""
+    st.markdown(
+        "드리프트 감시 · 성능 추이 · 재학습 판단은 **시간이 흐르고 데이터가 쌓여야** 의미가 생긴다. "
+        "방금 만든 앱에서는 이 화면들이 전부 비어 있어 운영이 되는지 확인할 수가 없다. "
+        "여기서 **운영 3개월치를 몇 초 만에 재생**하면 나머지 탭에 실제로 값이 채워진다."
+    )
+    st.info(
+        "새 기능을 흉내 내는 것이 아닙니다. 배치 추론 · 드리프트 감시 · 성능 측정은 "
+        "다른 탭에서 쓰는 것과 **같은 코드**를 그대로 실행합니다. 다른 것은 추론 시각을 "
+        "과거로 채우고, 조명·초점 변화를 이미지에 입힌다는 점뿐입니다.",
+        icon="ℹ️",
+    )
+
+    prod = registry.production()
+    if prod is None:
+        st.warning(
+            "서비스 중인 모델이 없습니다. **모델 레지스트리** 탭에서 3단계 실행을 등록하고 승격해야 "
+            "시나리오를 돌릴 수 있습니다.",
+            icon="⚠️",
+        )
+        return
+    if df.empty:
+        st.warning("등록된 이미지가 없습니다. 1단계에서 데이터를 먼저 등록하세요.", icon="⚠️")
+        return
+
+    st.caption(f"대상 모델: **{prod['version']}** · 이미지 {len(df):,}건")
+
+    with st.expander("재생할 시나리오", expanded=True):
+        for index, phase in enumerate(scenario.DEFAULT_TIMELINE, start=1):
+            st.markdown(
+                f"**{index}. {phase.title}** — 환경: `{phase.environment.describe()}`  \n"
+                f"{phase.narration}  \n"
+                f"➡️ {phase.watch}"
+            )
+    st.caption(
+        f"구간마다 {scenario.DEFAULT_TIMELINE[0].n_images}장을 검사하고 그중 "
+        f"{scenario.DEFAULT_TIMELINE[0].verify_ratio:.0%}를 사후 검수합니다. "
+        "검수 정답은 manifest 라벨에서 오고 모델 점수와 무관하므로 자기 채점이 아닙니다. "
+        f"기록되는 라벨은 `{scenario.LABELED_BY}` 출처로 남아 사람이 검수한 라벨과 구분됩니다."
+    )
+
+    col1, col2 = st.columns([1, 1])
+    if col1.button("🎬 운영 3개월치 재생", type="primary", key="p4_scen_run"):
+        bar = st.progress(0.0, text="준비 중...")
+
+        def on_progress(index: int, total: int, title: str) -> None:
+            bar.progress(index / total, text=f"{title} 재생 중... ({index}/{total})")
+
+        with st.spinner("추론과 검수를 재생하는 중..."):
+            result = scenario.run(str(prod["version"]), df, progress=on_progress)
+        bar.empty()
+        st.session_state[_SCENARIO_KEY] = result
+        st.rerun()
+
+    if col2.button("🧹 시나리오 로그 지우기", key="p4_scen_clear"):
+        removed = scenario.clear()
+        st.session_state.pop(_SCENARIO_KEY, None)
+        st.success(f"시나리오가 만든 추론 로그 {removed:,}건을 지웠습니다.", icon="✅")
+        st.rerun()
+
+    result = st.session_state.get(_SCENARIO_KEY)
+    if result is None:
+        return
+
+    for warning in result.warnings:
+        st.warning(warning, icon="⚠️")
+    if not result.phases:
+        return
+
+    st.divider()
+    st.subheader("재생 결과")
+    cols = st.columns(3)
+    cols[0].metric("쌓인 추론 로그", f"{result.total_logged:,}건")
+    cols[1].metric("사후 검수", f"{result.total_verified:,}건")
+    cols[2].metric("재생 기간", f"{sum(p.phase.days for p in result.phases)}일")
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "구간": p.phase.title,
+                    "환경": p.phase.environment.describe(),
+                    "검사": p.logged,
+                    "결함 판정 비율": round(p.defect_rate, 3),
+                    "평균 점수": round(p.mean_score, 2),
+                    "재현율": round(p.recall, 2),
+                    "검수된 결함": p.verified_defects,
+                    "드리프트": p.drift_level,
+                    "변화 특징 수": p.drift_changed,
+                }
+                for p in result.phases
+            ]
+        ),
+        hide_index=True,
+        width="stretch",
+    )
+    st.caption(
+        "재현율은 **검수된 결함 건수**가 적으면 크게 흔들린다. 옆 칸의 건수를 함께 보고 판단하세요."
+    )
+
+    for p in result.phases:
+        if p.top_drift:
+            st.markdown(
+                f"**{p.phase.title}** — PSI 상위: "
+                + ", ".join(f"`{name}` {value:.2f}" for name, value in p.top_drift)
+            )
+
+    st.success(
+        "이제 **드리프트 감시 · 성능 추이 · 재학습 판단 · 판정 이력** 탭에 값이 채워져 있습니다. "
+        "차례로 열어 확인하세요.",
+        icon="✅",
+    )
+    st.warning(
+        "여기서 나온 수치는 **화면 시연용이지 모델 성능 근거가 아닙니다.** "
+        "환경 변화를 인위적으로 넣은 결과이므로 재현율·PSI를 성능으로 인용하면 안 됩니다.",
+        icon="⚠️",
+    )
+
+
 def render() -> None:
     st.title("⚙️ 4단계 · 사후 운영관리 (MLOps)")
     st.caption(
@@ -641,19 +763,22 @@ def render() -> None:
 
     df = _resolved()
     tabs = st.tabs(
-        ["📚 모델 레지스트리", "▶️ 배치 추론", "📉 드리프트 감시", "📈 성능 추이", "🔁 재학습 판단", "🔍 판정 이력"]
+        ["🎬 운영 시나리오 시연", "📚 모델 레지스트리", "▶️ 배치 추론", "📉 드리프트 감시",
+         "📈 성능 추이", "🔁 재학습 판단", "🔍 판정 이력"]
     )
     with tabs[0]:
-        _registry_tab(df)
+        _scenario_tab(df)
     with tabs[1]:
-        _inference_tab(df)
+        _registry_tab(df)
     with tabs[2]:
-        _drift_tab(df)
+        _inference_tab(df)
     with tabs[3]:
-        _performance_tab(df)
+        _drift_tab(df)
     with tabs[4]:
-        _retraining_tab(df)
+        _performance_tab(df)
     with tabs[5]:
+        _retraining_tab(df)
+    with tabs[6]:
         _trace_tab(df)
 
 

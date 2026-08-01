@@ -96,11 +96,15 @@ def run_batch(
     rows: pd.DataFrame,
     *,
     threshold: float | None = None,
+    transform: Callable[[np.ndarray], np.ndarray] | None = None,
     progress: ProgressCallback | None = None,
 ) -> BatchResult:
     """이미지 묶음에 추론을 돌리고 로그 레코드를 만든다.
 
     특징 행렬도 함께 반환한다 — 드리프트 감시가 같은 특징을 다시 계산하지 않도록.
+
+    `transform`은 이미지를 읽은 뒤 특징을 뽑기 전에 끼워 넣는다. 운영 시나리오 시뮬레이터가
+    조명·초점 변화를 재현할 때 쓴다. 실제 배치 추론에서는 쓰지 않는다.
     """
     threshold = float(model.threshold if threshold is None else threshold)
     records: list[dict] = []
@@ -115,6 +119,8 @@ def run_batch(
         if image is None:
             failed.append(str(row.get("image_id", path)))
         else:
+            if transform is not None:
+                image = transform(image)
             started = time.perf_counter()
             vector = features.image_features(image)
             score = (

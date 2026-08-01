@@ -8,6 +8,7 @@ import streamlit as st
 
 from vision_ai import (
     claude_review,
+    cnn_features,
     config,
     evaluate,
     experiments,
@@ -334,6 +335,54 @@ def _baseline_tab(df: pd.DataFrame) -> None:
 
 # --- 3) 이상탐지 --------------------------------------------------------------
 
+def _backend_picker() -> str:
+    """특징 추출 방식을 고르게 한다.
+
+    **기본은 고전 CV다.** 사전학습 CNN을 측정해 보니 이미지 판정은 조금 나아지지만
+    (평균 AUROC 0.830 → 0.846, AP 0.811 → 0.851) **위치 찾기는 크게 나빠진다**
+    (적중률 0.194 → 0.013). OpenCV로는 마지막 8×8 특징맵만 쓸 수 있어 미세 결함을
+    짚기에 너무 성기기 때문이다. 그래서 권장이 아니라 선택지로 둔다.
+    """
+    with st.expander("특징 추출 방식 (기본: 고전 CV)", expanded=False):
+        st.caption(
+            "**측정 결과**(VisA PCB 4종): 사전학습 CNN은 이미지 판정이 조금 나아지지만"
+            "(평균 AUROC 0.830 → 0.846) **결함 위치 찾기는 크게 나빠집니다**"
+            "(적중률 0.194 → 0.013). 위치 히트맵이 필요하면 고전 CV를 쓰세요."
+        )
+        choice = st.radio(
+            "방식", list(models.BACKENDS), horizontal=True,
+            format_func=lambda k: models.BACKEND_LABELS.get(k, k), key="p3_an_backend",
+        )
+        if choice != models.BACKEND_CNN:
+            return choice
+
+        st.caption(cnn_features.describe())
+        if cnn_features.available():
+            return choice
+
+        st.warning(
+            f"이 방식은 사전학습 모델 파일(약 {cnn_features.MODEL_SIZE_MB}MB)이 필요합니다. "
+            "저장소에 넣기엔 커서 필요할 때 내려받습니다.",
+            icon="⬇️",
+        )
+        if st.button("⬇️ 모델 내려받기", key="p3_an_download"):
+            bar = st.progress(0.0, text="내려받는 중...")
+            try:
+                cnn_features.download(
+                    progress=lambda done, total: bar.progress(
+                        done / total, text=f"내려받는 중... {done/1024**2:.0f}/{total/1024**2:.0f}MB"
+                    )
+                )
+            except RuntimeError as exc:
+                bar.empty()
+                st.error(str(exc), icon="🚧")
+                return models.BACKEND_CLASSIC
+            bar.empty()
+            st.success("내려받았습니다.", icon="✅")
+            st.rerun()
+        return models.BACKEND_CLASSIC
+
+
 def _anomaly_tab(df: pd.DataFrame) -> None:
     st.caption(f"**이상탐지** — {glossary.term('이상탐지')}")
     st.markdown(
@@ -356,6 +405,7 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
     eval_split = col1.selectbox(
         "평가 분할", [config.SPLIT_TEST, config.SPLIT_VAL], key="p3_an_split"
     )
+    backend = _backend_picker()
     per_position = col2.checkbox(
         "위치별 분포 학습", value=True, key="p3_an_perpos",
         help=(
@@ -402,7 +452,9 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
                 images.append(image)
             bar.progress(index / len(train_normal) * 0.5, text=f"정상 학습 {index}/{len(train_normal)}")
         model = models.PatchAnomalyModel(
-            models.AnomalyConfig(per_position=per_position, image_score=score_mode)
+            models.AnomalyConfig(
+                per_position=per_position, image_score=score_mode, backend=backend
+            )
         ).fit(images)
     except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
         bar.empty()
@@ -432,7 +484,7 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
 
     metrics = evaluate.summarize(y_array, scores_array, threshold)
     settings = {
-        "per_position": per_position, "image_score": score_mode,
+        "per_position": per_position, "image_score": score_mode, "backend": backend,
         "patch": model.config.patch, "stride": model.config.stride,
         "target_recall": target_recall,
     }

@@ -123,7 +123,7 @@ def run_category(root: Path, split: pd.DataFrame, category: str, args) -> dict:
         if image is not None:
             train_images.append(image)
 
-    config = models.AnomalyConfig(per_position=args.per_position)
+    config = models.AnomalyConfig(per_position=args.per_position, backend=args.backend)
     model = models.PatchAnomalyModel(config).fit(train_images)
     fit_seconds = time.time() - started
 
@@ -164,6 +164,10 @@ def main() -> int:
     parser.add_argument("--localization-limit", type=int, default=40)
     parser.add_argument("--per-position", action="store_true", default=True)
     parser.add_argument("--pooled", dest="per_position", action="store_false")
+    parser.add_argument(
+        "--backend", default=models.BACKEND_CLASSIC, choices=list(models.BACKENDS),
+        help="특징 추출 방식. cnn은 사전학습 모델 파일이 있어야 한다.",
+    )
     parser.add_argument("--out", default="artifacts/reports/visa_validation.json")
     args = parser.parse_args()
 
@@ -202,7 +206,8 @@ def main() -> int:
         "dataset": "VisA (CC BY 4.0)",
         "protocol": "공식 1cls 분할 — train은 정상만, test는 정상+결함",
         "threshold_policy": f"검증 절반에서 목표 재현율 {TARGET_RECALL:.0%}, 나머지 절반에서 보고",
-        "config": {"per_position": args.per_position, "limit_train": args.limit_train},
+        "config": {"per_position": args.per_position, "limit_train": args.limit_train,
+                   "backend": args.backend},
         "categories": results,
         "mean_auroc": float(np.mean([r["auroc"] for r in results])),
         "mean_average_precision": float(np.mean([r["average_precision"] for r in results])),

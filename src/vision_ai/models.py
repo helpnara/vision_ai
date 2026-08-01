@@ -136,6 +136,15 @@ _SCORE_MODE_LABELS = {
 }
 
 
+BACKEND_CLASSIC = "classic"
+BACKEND_CNN = "cnn"
+BACKENDS = (BACKEND_CLASSIC, BACKEND_CNN)
+BACKEND_LABELS = {
+    BACKEND_CLASSIC: "고전 CV 특징 (설치 불필요)",
+    BACKEND_CNN: "사전학습 CNN 특징 (모델 45MB 필요)",
+}
+
+
 @dataclass
 class AnomalyConfig:
     """이상탐지 설정."""
@@ -146,6 +155,9 @@ class AnomalyConfig:
     shrinkage: float = 0.05     # 공분산 정규화 — 표본이 적을 때 역행렬 안정화
     image_score: str = "p99"
     size: int = features.IMAGE_SIZE
+    # "classic" = 고전 CV 패치 특징(기본, 의존성 없음)
+    # "cnn"     = 사전학습 ResNet18 특징 (모델 파일 필요, 정확도가 크게 높다)
+    backend: str = BACKEND_CLASSIC
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -168,13 +180,30 @@ class PatchAnomalyModel:
         self._precision: np.ndarray | None = None  # (P, D, D) 또는 (1, D, D)
         self._grid: tuple[int, int] | None = None
         self.n_train = 0
+        self._extractor = None   # CNN 백엔드에서만 쓴다 (모델을 한 번만 읽도록)
+
+    def _grid_features(self, image: np.ndarray) -> np.ndarray:
+        """이미지 한 장 → (높이, 너비, 차원) 격자 특징.
+
+        학습과 추론이 **반드시 같은 방식**을 써야 하므로 추출을 여기 한 곳에 둔다.
+        """
+        if self.config.backend != BACKEND_CNN:
+            return features.patch_features(image, self.config.patch, self.config.stride)
+
+        if self._extractor is None:
+            from . import cnn_features
+
+            self._extractor = cnn_features.load()
+        flat = self._extractor.patch_grid(image)           # (위치, 차원)
+        side = self._extractor.grid
+        return flat.reshape(side, side, -1)
 
     # -- 학습 --
     def fit(self, images: Iterable[np.ndarray]) -> "PatchAnomalyModel":
         """정상 이미지들로 학습한다."""
         stacks: list[np.ndarray] = []
         for image in images:
-            grid = features.patch_features(image, self.config.patch, self.config.stride)
+            grid = self._grid_features(image)
             stacks.append(grid.reshape(-1, grid.shape[-1]))
             if self._grid is None:
                 self._grid = grid.shape[:2]
@@ -219,7 +248,7 @@ class PatchAnomalyModel:
         """격자별 마할라노비스 거리를 반환한다."""
         if not self.is_fitted:
             raise RuntimeError("학습되지 않은 모델입니다.")
-        grid = features.patch_features(rgb, self.config.patch, self.config.stride)
+        grid = self._grid_features(rgb)
         rows, cols, dim = grid.shape
         flat = grid.reshape(-1, dim)
 

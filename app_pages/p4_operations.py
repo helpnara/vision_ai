@@ -9,6 +9,7 @@ import streamlit as st
 from vision_ai import (
     claude_review,
     config,
+    evaluate,
     experiments,
     features,
     glossary,
@@ -112,7 +113,8 @@ def _registry_tab(df: pd.DataFrame) -> None:
         target = st.selectbox(
             "승격할 버전", frame["version"].astype(str).tolist(), key="p4_promote_pick"
         )
-        if st.button("🟢 서비스 중으로 승격", key="p4_promote_do"):
+        blocked = _promotion_gate(frame, target)
+        if st.button("🟢 서비스 중으로 승격", key="p4_promote_do", disabled=blocked):
             registry.promote(target)
             st.success(f"{target}을(를) 서비스 중으로 전환했습니다.", icon="✅")
             st.rerun()
@@ -136,6 +138,50 @@ def _registry_tab(df: pd.DataFrame) -> None:
         )
         if run:
             st.json(run)
+
+
+def _promotion_gate(frame: pd.DataFrame, version: str) -> bool:
+    """승격 전에 D5 기준으로 점검한다. 미달이면 확인을 받는다.
+
+    **막지는 않는다.** 기준은 아직 승인 전 제안값이고, 비교나 시연 목적으로 일부러 낮은
+    모델을 올릴 수도 있다. 다만 초보자가 성능 미달 모델을 아무 신호 없이 올리면, 그 뒤의
+    드리프트 감시와 재학습 판단이 전부 그 모델을 기준으로 돌아간다.
+
+    Returns:
+        승격 버튼을 잠가야 하면 True.
+    """
+    row = frame[frame["version"].astype(str) == str(version)]
+    if row.empty:
+        return False
+    row = row.iloc[0]
+
+    metrics = {"recall": row.get("recall")}
+    impact = None
+    recall, false_alarm = row.get("recall"), row.get("false_alarm_rate")
+    if pd.notna(recall) and pd.notna(false_alarm):
+        impact = evaluate.business_impact(float(recall), float(false_alarm))
+    elif pd.notna(recall) and pd.notna(row.get("precision")):
+        # 레지스트리에는 오탐률이 없다. 정밀도와 재현율로 되짚어 계산한다
+        # (평가 구성이 1:1이라는 가정이 들어가므로 근사치다).
+        precision = float(row["precision"])
+        if precision > 0:
+            false_alarm = float(recall) * (1.0 - precision) / precision
+            impact = evaluate.business_impact(float(recall), min(false_alarm, 1.0))
+
+    check = glossary.promotion_check(metrics, impact)
+    if check.passed:
+        st.caption("✅ 성능 기준을 만족합니다.")
+        return False
+
+    st.warning(
+        "**이 버전은 권장 기준에 못 미칩니다.**\n\n" + "\n\n".join(f"- {p}" for p in check.problems),
+        icon="⚠️",
+    )
+    for note in check.notes:
+        st.caption(note)
+    return not st.checkbox(
+        "기준 미달을 확인했고 그래도 승격합니다", key=f"p4_promote_ack_{version}"
+    )
 
 
 def _run_label(runs: pd.DataFrame, run_id: str) -> str:
@@ -384,8 +430,14 @@ def _drift_tab(df: pd.DataFrame) -> None:
         st.markdown(f"- {glossary.ARBITRARY['drift_samples']}")
 
     st.divider()
+    _drift_causes(drift)
+
     st.markdown("**특징별 분포 이동 (PSI 상위)**")
-    display = drift.head(20)[["feature", "psi", "level", "baseline_mean", "current_mean", "shift_sigma"]]
+    display = drift.head(20)[
+        ["feature", "psi", "level", "baseline_mean", "current_mean", "shift_sigma"]
+    ].copy()
+    # 내부 특징명만으로는 무엇이 변했는지 알 수 없다. 뜻을 나란히 붙인다.
+    display.insert(1, "무엇을 재는가", [glossary.feature_meaning(f) for f in display["feature"]])
     st.dataframe(display.round(4), hide_index=True, width="stretch")
 
     if drift["psi"].notna().any():
@@ -650,6 +702,31 @@ def _trace_tab(df: pd.DataFrame) -> None:
 
 
 # --- 페이지 -------------------------------------------------------------------
+
+def _drift_causes(drift: pd.DataFrame) -> None:
+    """분포가 변한 특징을 현장에서 확인할 것으로 옮겨 준다.
+
+    `gray_mean`, `lap_p99` 같은 이름만 보고 "조명이 바뀌었나?"까지 연결하려면 각 특징이
+    무엇을 재는지 알아야 하는데, 그건 이 파이프라인을 만든 사람만 안다.
+    """
+    shifted = drift[drift["level"].astype(str) == "변화"]
+    if shifted.empty:
+        return
+
+    names = shifted.sort_values("psi", ascending=False)["feature"].astype(str).tolist()
+    causes = glossary.drift_causes(names)
+    if not causes:
+        return
+
+    st.markdown("**무엇을 확인해야 하나**")
+    st.caption(
+        "분포가 변한 특징으로부터 추정한 것입니다. 모델을 다시 학습하기 전에 "
+        "**현장 조건이 바뀌지 않았는지 먼저 확인**하는 편이 빠릅니다."
+    )
+    for cause in causes[:4]:
+        st.markdown(f"- {cause}")
+    st.divider()
+
 
 def _scenario_tab(df: pd.DataFrame) -> None:
     """운영 몇 달치를 재생해 나머지 탭이 작동하는 모습을 보이게 한다."""

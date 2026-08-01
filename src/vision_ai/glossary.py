@@ -239,3 +239,118 @@ def verdict(metrics: dict, impact: dict, *, target_recall: float = 0.95) -> Verd
     if not actions:
         actions.append("4단계에서 이 모델을 등록·승격하면 운영 감시가 시작됩니다.")
     return Verdict(level, headline, actions)
+
+
+# --- 드리프트 원인을 현장 언어로 (A3) --------------------------------------
+#
+# 화면에는 `gray_mean`, `lap_p99` 같은 내부 특징명이 그대로 나온다. 이걸 보고
+# "조명이 바뀐 것 같다"까지 연결하려면 특징이 무엇을 재는지 알아야 하는데, 그건
+# 이 파이프라인을 만든 사람만 안다. 접두사로 묶어 현장에서 확인할 것으로 옮긴다.
+
+@dataclass(frozen=True)
+class FeatureFamily:
+    meaning: str      # 이 특징이 무엇을 재는가
+    cause: str        # 이 값이 변했다면 현장에서 무엇을 의심할까
+
+
+# 접두사가 긴 것부터 검사한다 (`lap_var`가 `lap`보다 먼저 잡히도록).
+FEATURE_FAMILIES: tuple[tuple[str, FeatureFamily], ...] = (
+    ("gray", FeatureFamily("이미지 밝기", "조명 밝기나 노출 설정이 바뀌었을 가능성")),
+    ("hist", FeatureFamily("밝기 분포 모양", "조명 방향이 바뀌었거나 배경/소재가 달라졌을 가능성")),
+    ("lap", FeatureFamily("경계의 뚜렷함(선명도)", "카메라 초점이 틀어졌거나 진동·흔들림이 있을 가능성")),
+    ("hf", FeatureFamily("미세한 무늬 성분", "초점 저하 또는 이미지 압축·해상도 변경 가능성")),
+    ("sobel", FeatureFamily("윤곽선의 세기", "제품 모양이나 놓인 각도가 달라졌을 가능성")),
+    ("canny", FeatureFamily("윤곽선의 양", "제품 종류가 바뀌었거나 배경이 달라졌을 가능성")),
+    ("lbp", FeatureFamily("표면 질감 패턴", "소재나 표면 처리(도장·코팅)가 바뀌었을 가능성")),
+    ("h_", FeatureFamily("색상(색조)", "조명 색온도가 바뀌었거나 소재 색이 달라졌을 가능성")),
+    ("s_", FeatureFamily("색의 진하기", "조명 색온도 변화 또는 소재 변경 가능성")),
+    ("v_", FeatureFamily("색 밝기", "조명 밝기가 바뀌었을 가능성")),
+    ("r_", FeatureFamily("빨강 성분", "조명 색온도가 바뀌었을 가능성")),
+    ("g_", FeatureFamily("초록 성분", "조명 색온도가 바뀌었을 가능성")),
+    ("b_", FeatureFamily("파랑 성분", "조명 색온도가 바뀌었을 가능성")),
+    ("dev_gt", FeatureFamily("평균에서 크게 벗어난 픽셀의 양", "얼룩·이물 증가 또는 조명 불균일 가능성")),
+    ("col_profile", FeatureFamily("좌우 방향 밝기 흐름", "조명 위치가 치우쳤거나 제품 정렬이 틀어졌을 가능성")),
+    ("row_profile", FeatureFamily("위아래 방향 밝기 흐름", "조명 위치가 치우쳤거나 제품 정렬이 틀어졌을 가능성")),
+)
+
+
+def feature_family(name: str) -> FeatureFamily | None:
+    """특징명을 그 특징이 속한 묶음으로 옮긴다. 모르는 이름이면 None."""
+    text = str(name)
+    for prefix, family in FEATURE_FAMILIES:
+        if text.startswith(prefix):
+            return family
+    return None
+
+
+def feature_meaning(name: str) -> str:
+    """특징이 무엇을 재는지 한 줄로. 모르면 이름을 그대로 돌려준다."""
+    family = feature_family(name)
+    return family.meaning if family else str(name)
+
+
+def drift_causes(feature_names) -> list[str]:
+    """분포가 변한 특징들로부터 현장에서 확인할 것을 추린다.
+
+    같은 원인을 가리키는 특징이 여러 개 뜨는 것이 보통이므로(조명이 바뀌면 밝기 계열이
+    한꺼번에 움직인다) **중복을 없애고 순서를 유지한다.** 원인을 나열하는 것이 목적이지
+    몇 개가 떴는지를 세는 것이 목적이 아니다.
+    """
+    causes: list[str] = []
+    for name in feature_names:
+        family = feature_family(name)
+        if family and family.cause not in causes:
+            causes.append(family.cause)
+    return causes
+
+
+# --- 승격 전 점검 (A2) ------------------------------------------------------
+#
+# 지금은 성능이 어떻든 경고 없이 '서비스 중'으로 올릴 수 있다. 초보자가 하기 쉬운 실수이고,
+# 한 번 올리면 그 뒤의 감시·재학습 판단이 전부 그 모델을 기준으로 돌아간다.
+
+# D5 제안값 (설계 문서 4.4). 승인 대기 중이므로 화면에도 제안임을 밝힌다.
+PROMOTION_MIN_RECALL = 0.95
+PROMOTION_MIN_REDUCTION = 0.50
+
+
+@dataclass(frozen=True)
+class PromotionCheck:
+    passed: bool
+    problems: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def promotion_check(metrics: dict, impact: dict | None = None) -> PromotionCheck:
+    """이 모델을 서비스에 올려도 되는지 D5 기준으로 점검한다.
+
+    **막지는 않는다.** 기준은 아직 승인 대기 중인 제안값이고, 시연이나 비교 목적으로
+    일부러 낮은 모델을 올릴 수도 있다. 대신 무엇이 미달인지 알리고 확인을 받는다.
+    """
+    problems: list[str] = []
+    notes: list[str] = []
+
+    recall = metrics.get("recall")
+    if recall is None or recall != recall:
+        notes.append("재현율 기록이 없어 성능을 점검할 수 없습니다.")
+    elif float(recall) < PROMOTION_MIN_RECALL:
+        problems.append(
+            f"재현율 {float(recall):.1%}가 기준 {PROMOTION_MIN_RECALL:.0%}에 못 미칩니다 — "
+            "결함을 그만큼 놓친 채로 운영이 시작됩니다."
+        )
+
+    if impact is not None:
+        reduction = float(impact.get("reduction_ratio", 0.0))
+        if reduction < PROMOTION_MIN_REDUCTION:
+            problems.append(
+                f"검수량 절감률 {reduction:.0%}가 기준 {PROMOTION_MIN_REDUCTION:.0%}에 "
+                "못 미칩니다 — 사람이 볼 물량이 충분히 줄지 않아 도입 효과가 작습니다."
+            )
+    else:
+        notes.append("오탐률 기록이 없어 검수량 절감률을 계산하지 못했습니다.")
+
+    notes.append(
+        "이 기준은 설계 문서 4.4의 **제안값이며 아직 승인 전**입니다. "
+        "미탐 비용이 크면 재현율 목표를 더 높게 잡아야 합니다."
+    )
+    return PromotionCheck(passed=not problems, problems=problems, notes=notes)

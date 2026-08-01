@@ -112,3 +112,85 @@ def test_measured_visa_numbers_land_in_usable_band():
         {"auroc": 0.830, "recall": 0.925}, _impact(0.925, 0.455)
     )
     assert result.level == glossary.LEVEL_USABLE
+
+
+# --- 드리프트 원인 평문화 (A3) ---------------------------------------------
+
+def test_every_real_feature_name_maps_to_plain_language():
+    """실제 특징 67개가 전부 현장 언어로 옮겨져야 한다 — 하나라도 빠지면 화면에 내부명이 샌다."""
+    from vision_ai import features
+
+    unmapped = [n for n in features.FEATURE_NAMES if glossary.feature_family(n) is None]
+    assert not unmapped, f"매핑되지 않은 특징: {unmapped}"
+
+
+def test_brightness_features_point_to_lighting():
+    assert "조명" in glossary.feature_family("gray_mean").cause
+    assert glossary.feature_meaning("gray_p50") == "이미지 밝기"
+
+
+def test_sharpness_features_point_to_focus():
+    assert "초점" in glossary.feature_family("lap_p99").cause
+
+
+def test_longer_prefix_wins_over_shorter():
+    """`lap_var`가 `lap`보다 먼저 잡혀야 하듯, 접두사 충돌이 없어야 한다."""
+    assert glossary.feature_meaning("lap_var") == glossary.feature_meaning("lap_p99")
+    assert glossary.feature_meaning("hf_p99") == "미세한 무늬 성분"
+
+
+def test_drift_causes_deduplicates_same_root_cause():
+    """조명이 바뀌면 밝기 계열이 한꺼번에 뜬다 — 같은 원인을 반복하면 안 된다."""
+    causes = glossary.drift_causes(["gray_mean", "gray_p50", "gray_p75"])
+    assert len(causes) == 1
+
+
+def test_drift_causes_keeps_order_of_severity():
+    causes = glossary.drift_causes(["lap_p99", "gray_mean"])
+    assert "초점" in causes[0]      # PSI가 가장 큰 것이 먼저 나온다
+    assert "조명" in causes[1]
+
+
+def test_drift_causes_ignores_unknown_names():
+    assert glossary.drift_causes(["존재하지않는특징"]) == []
+
+
+# --- 승격 전 점검 (A2) ------------------------------------------------------
+
+def test_good_model_passes_promotion_check():
+    check = glossary.promotion_check({"recall": 0.97}, _impact(0.97, 0.05))
+    assert check.passed
+    assert not check.problems
+
+
+def test_low_recall_blocks_with_reason():
+    check = glossary.promotion_check({"recall": 0.84}, _impact(0.84, 0.20))
+    assert not check.passed
+    assert any("재현율" in p and "놓친 채로" in p for p in check.problems)
+
+
+def test_no_review_saving_is_flagged():
+    check = glossary.promotion_check({"recall": 0.99}, _impact(0.99, 0.95))
+    assert not check.passed
+    assert any("검수량 절감률" in p for p in check.problems)
+
+
+def test_missing_metrics_are_noted_not_treated_as_failure():
+    """지표가 없는 것과 미달인 것은 다르다 — 없는 것을 실패로 처리하면 안 된다."""
+    check = glossary.promotion_check({}, None)
+    assert check.passed
+    assert any("점검할 수 없" in n for n in check.notes)
+    assert any("계산하지 못했" in n for n in check.notes)
+
+
+def test_check_always_says_criteria_are_provisional():
+    """기준이 승인 전 제안값임을 항상 밝혀야 한다."""
+    for metrics in ({"recall": 0.99}, {"recall": 0.50}):
+        check = glossary.promotion_check(metrics, _impact(0.9, 0.2))
+        assert any("승인 전" in n for n in check.notes)
+
+
+def test_measured_visa_model_would_be_flagged_on_promotion():
+    """실측 모델(재현율 0.925)은 기준 미달이므로 경고가 떠야 한다."""
+    check = glossary.promotion_check({"recall": 0.925}, _impact(0.925, 0.455))
+    assert not check.passed

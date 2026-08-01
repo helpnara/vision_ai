@@ -309,7 +309,9 @@ def drift_causes(feature_names) -> list[str]:
 # 지금은 성능이 어떻든 경고 없이 '서비스 중'으로 올릴 수 있다. 초보자가 하기 쉬운 실수이고,
 # 한 번 올리면 그 뒤의 감시·재학습 판단이 전부 그 모델을 기준으로 돌아간다.
 
-# D5 제안값 (설계 문서 4.4). 승인 대기 중이므로 화면에도 제안임을 밝힌다.
+# 기본값은 D5 제안값(설계 문서 4.4). 실제로 쓰이는 값은 **설정 화면에서 바꿀 수 있고**,
+# `promotion_check`가 저장된 설정을 읽는다. 화면마다 다른 값을 쓰면 같은 모델을 두 화면이
+# 다르게 평가하게 된다.
 PROMOTION_MIN_RECALL = 0.95
 PROMOTION_MIN_REDUCTION = 0.50
 
@@ -321,37 +323,53 @@ class PromotionCheck:
     notes: list[str] = field(default_factory=list)
 
 
-def promotion_check(metrics: dict, impact: dict | None = None) -> PromotionCheck:
-    """이 모델을 서비스에 올려도 되는지 D5 기준으로 점검한다.
+def promotion_check(
+    metrics: dict,
+    impact: dict | None = None,
+    *,
+    min_recall: float | None = None,
+    min_reduction: float | None = None,
+) -> PromotionCheck:
+    """이 모델을 서비스에 올려도 되는지 기준 대비 점검한다.
 
-    **막지는 않는다.** 기준은 아직 승인 대기 중인 제안값이고, 시연이나 비교 목적으로
-    일부러 낮은 모델을 올릴 수도 있다. 대신 무엇이 미달인지 알리고 확인을 받는다.
+    기준을 넘기지 않으면 **사용자 설정**을 읽는다. 설정 화면에서 목표 재현율을 올렸는데
+    승격 점검이 옛 값으로 판단하면 안 되기 때문이다.
+
+    **막지는 않는다.** 시연이나 비교 목적으로 일부러 낮은 모델을 올릴 수도 있다.
+    대신 무엇이 미달인지 알리고 확인을 받는다.
     """
+    if min_recall is None or min_reduction is None:
+        from . import settings as settings_module
+
+        current = settings_module.load()
+        min_recall = current.target_recall if min_recall is None else min_recall
+        min_reduction = current.min_reduction if min_reduction is None else min_reduction
+
     problems: list[str] = []
     notes: list[str] = []
 
     recall = metrics.get("recall")
     if recall is None or recall != recall:
         notes.append("재현율 기록이 없어 성능을 점검할 수 없습니다.")
-    elif float(recall) < PROMOTION_MIN_RECALL:
+    elif float(recall) < min_recall:
         problems.append(
-            f"재현율 {float(recall):.1%}가 기준 {PROMOTION_MIN_RECALL:.0%}에 못 미칩니다 — "
+            f"재현율 {float(recall):.1%}가 기준 {min_recall:.0%}에 못 미칩니다 — "
             "결함을 그만큼 놓친 채로 운영이 시작됩니다."
         )
 
     if impact is not None:
         reduction = float(impact.get("reduction_ratio", 0.0))
-        if reduction < PROMOTION_MIN_REDUCTION:
+        if reduction < min_reduction:
             problems.append(
-                f"검수량 절감률 {reduction:.0%}가 기준 {PROMOTION_MIN_REDUCTION:.0%}에 "
+                f"검수량 절감률 {reduction:.0%}가 기준 {min_reduction:.0%}에 "
                 "못 미칩니다 — 사람이 볼 물량이 충분히 줄지 않아 도입 효과가 작습니다."
             )
     else:
         notes.append("오탐률 기록이 없어 검수량 절감률을 계산하지 못했습니다.")
 
     notes.append(
-        "이 기준은 설계 문서 4.4의 **제안값이며 아직 승인 전**입니다. "
-        "미탐 비용이 크면 재현율 목표를 더 높게 잡아야 합니다."
+        f"적용 기준: 재현율 {min_recall:.0%} · 검수량 절감률 {min_reduction:.0%}. "
+        "**설정 화면에서 바꿀 수 있습니다** — 미탐 비용이 크면 재현율 목표를 더 높게 잡으세요."
     )
     return PromotionCheck(passed=not problems, problems=problems, notes=notes)
 

@@ -31,6 +31,7 @@ PAGE_INGEST = "app_pages/p1_ingest.py"
 PAGE_LABELING = "app_pages/p2_labeling.py"
 PAGE_MODELING = "app_pages/p3_modeling.py"
 PAGE_OPERATIONS = "app_pages/p4_operations.py"
+PAGE_SETTINGS = "app_pages/p5_settings.py"
 
 KIND_ANOMALY = "anomaly"
 KIND_BASELINE = "baseline"

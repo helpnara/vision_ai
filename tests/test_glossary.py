@@ -183,11 +183,21 @@ def test_missing_metrics_are_noted_not_treated_as_failure():
     assert any("계산하지 못했" in n for n in check.notes)
 
 
-def test_check_always_says_criteria_are_provisional():
-    """기준이 승인 전 제안값임을 항상 밝혀야 한다."""
+def test_check_always_states_the_applied_criteria():
+    """어떤 기준으로 판단했는지, 그리고 바꿀 수 있다는 것을 항상 밝혀야 한다."""
     for metrics in ({"recall": 0.99}, {"recall": 0.50}):
         check = glossary.promotion_check(metrics, _impact(0.9, 0.2))
-        assert any("승인 전" in n for n in check.notes)
+        assert any("적용 기준" in n and "설정 화면" in n for n in check.notes)
+
+
+def test_check_honors_custom_criteria():
+    """설정에서 목표를 올리면 통과하던 모델도 걸러야 한다."""
+    metrics, impact = {"recall": 0.96}, _impact(0.96, 0.05)
+    assert glossary.promotion_check(metrics, impact, min_recall=0.95, min_reduction=0.5).passed
+
+    stricter = glossary.promotion_check(metrics, impact, min_recall=0.98, min_reduction=0.5)
+    assert not stricter.passed
+    assert any("98%" in p for p in stricter.problems)
 
 
 def test_measured_visa_model_would_be_flagged_on_promotion():

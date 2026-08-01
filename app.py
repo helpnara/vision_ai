@@ -35,6 +35,7 @@ PAGES = [
     st.Page("app_pages/p2_labeling.py", title="2. 라벨링", icon="🏷️"),
     st.Page("app_pages/p3_modeling.py", title="3. 모델 개발 · 평가", icon="🧠"),
     st.Page("app_pages/p4_operations.py", title="4. 운영 관리 (MLOps)", icon="⚙️"),
+    st.Page("app_pages/p5_settings.py", title="설정", icon="🛠️"),
 ]
 
 with st.sidebar:

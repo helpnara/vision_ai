@@ -19,6 +19,7 @@ from vision_ai import (
     monitoring,
     registry,
     report,
+    settings as user_settings,
     storage,
     viz,
 )
@@ -258,7 +259,8 @@ def _baseline_tab(df: pd.DataFrame) -> None:
     )
 
     target_recall = st.slider(
-        "목표 재현율 (미탐 최소화 기준)", 0.50, 1.00, 0.95, 0.01, key="p3_bl_recall",
+        "목표 재현율 (미탐 최소화 기준)", 0.50, 1.00,
+        user_settings.load().target_recall, 0.01, key="p3_bl_recall",
         help="이 재현율을 만족하는 임계값 중 오탐이 가장 적은 값을 자동 선택한다.",
     )
 
@@ -368,7 +370,8 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
         help="격자 점수들을 이미지 1장의 점수로 합치는 방식. 결함이 작으면 max 쪽이 민감하다.",
     )
     target_recall = st.slider(
-        "목표 재현율", 0.50, 1.00, 0.95, 0.01, key="p3_an_recall"
+        "목표 재현율", 0.50, 1.00, user_settings.load().target_recall, 0.01,
+        key="p3_an_recall"
     )
 
     eval_rows = labeled[labeled["split"].astype(str) == eval_split]
@@ -685,15 +688,16 @@ def _business_impact(metrics: dict) -> dict:
     st.markdown("### 이 모델을 쓰면 무엇이 좋아지는가")
 
     col1, col2, col3 = st.columns([1, 1, 2])
+    saved = user_settings.load()
     prevalence = col1.number_input(
-        "가정 불량률 (%)", 0.1, 50.0, evaluate.DEFAULT_PREVALENCE * 100, 0.1,
-        key="p3_rep_prevalence",
-        help="실제 라인에서 100개 중 몇 개가 불량인지. 모르면 1%로 두고 본다.",
+        "가정 불량률 (%)", 0.1, 50.0, saved.prevalence * 100, 0.1,
+        key="p3_rep_prevalence", help=user_settings.HELP["prevalence"],
     ) / 100.0
     volume = int(col2.number_input(
-        "검사 물량 (장)", 100, 1_000_000, 1000, 100, key="p3_rep_volume",
-        help="이 물량을 기준으로 건수를 환산한다.",
+        "검사 물량 (장)", 100, 1_000_000, saved.volume, 100, key="p3_rep_volume",
+        help=user_settings.HELP["volume"],
     ))
+    col3.caption("기본값은 **설정** 화면에서 바꿀 수 있습니다.")
 
     impact = evaluate.business_impact(recall, fpr, prevalence=prevalence, volume=volume)
 

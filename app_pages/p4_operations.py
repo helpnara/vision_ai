@@ -19,6 +19,7 @@ from vision_ai import (
     registry,
     scenario,
     serving,
+    settings as user_settings,
     storage,
     viz,
 )
@@ -572,13 +573,14 @@ def _retraining_tab(df: pd.DataFrame) -> None:
     new_labels = monitoring.new_labels_since(prod.get("promoted_at")) if prod is not None else 0
 
     col1, col2 = st.columns(2)
+    saved = user_settings.load()
     threshold = col1.number_input(
-        "재학습 기준 신규 라벨 수", 10, 5000, 50, 10, key="p4_rt_labels",
-        help="승격 이후 이만큼 라벨이 쌓이면 재학습을 제안한다.",
+        "재학습 기준 신규 라벨 수", 10, 5000, saved.new_label_threshold, 10,
+        key="p4_rt_labels", help=user_settings.HELP["new_label_threshold"],
     )
     margin = col2.slider(
-        "허용 재현율 낙폭", 0.01, 0.30, 0.05, 0.01, key="p4_rt_margin",
-        help="등록 시 재현율 대비 이보다 더 떨어지면 경보를 낸다.",
+        "허용 재현율 낙폭", 0.01, 0.30, saved.recall_margin, 0.01,
+        key="p4_rt_margin", help=user_settings.HELP["recall_margin"],
     )
 
     st.caption(

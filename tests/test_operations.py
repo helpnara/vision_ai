@@ -689,3 +689,63 @@ def test_trace_unknown_image_is_empty(sandbox):
     trace = monitoring.trace_image("nope")
     assert trace["manifest"] is None
     assert trace["inferences"].empty
+
+
+# --- 롤백 (A4) --------------------------------------------------------------
+
+def _register_versions(sandbox, count: int) -> list[str]:
+    versions = []
+    for index in range(count):
+        run_id = experiments.record_run(
+            kind="anomaly", model="patch",
+            metrics={"recall": 0.9 - index * 0.05, "threshold": 1.0},
+            settings={"n_train": 10}, n_train=10,
+        )
+        versions.append(registry.register(run_id, note=f"v{index}").version)
+    return versions
+
+
+def test_no_rollback_target_before_any_promotion(sandbox):
+    _register_versions(sandbox, 2)
+    assert registry.rollback_target() is None
+    assert registry.rollback() is None
+
+
+def test_rollback_returns_to_previous_production(sandbox):
+    first, second = _register_versions(sandbox, 2)
+    registry.promote(first)
+    registry.promote(second)
+
+    assert str(registry.production()["version"]) == second
+    assert registry.rollback() == first
+    assert str(registry.production()["version"]) == first
+
+
+def test_rollback_picks_most_recently_promoted_not_newest_registered(sandbox):
+    """나중에 등록한 것을 먼저 승격했다가 되돌리는 경우가 있다 — 등록 순서로 고르면 틀린다."""
+    first, second, third = _register_versions(sandbox, 3)
+    registry.promote(third)      # 가장 나중에 등록된 것을 먼저 씀
+    registry.promote(first)      # 그 다음 첫 번째로 바꿈
+    registry.promote(second)     # 지금은 두 번째가 서비스 중
+
+    # 직전에 쓰던 것은 first (third가 아니다)
+    assert str(registry.rollback_target()["version"]) == first
+
+
+def test_rollback_is_repeatable(sandbox):
+    """되돌린 뒤 다시 되돌리면 그 전 버전으로 가야 한다."""
+    first, second = _register_versions(sandbox, 2)
+    registry.promote(first)
+    registry.promote(second)
+    assert registry.rollback() == first
+    assert registry.rollback() == second
+
+
+def test_candidate_never_becomes_a_rollback_target(sandbox):
+    """한 번도 서비스한 적 없는 후보로 '되돌릴' 수는 없다."""
+    first, second = _register_versions(sandbox, 2)
+    registry.promote(first)
+    registry.promote(second)
+    target = registry.rollback_target()
+    assert str(target["version"]) == first
+    assert target["status"] == registry.STATUS_ARCHIVED

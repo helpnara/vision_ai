@@ -120,6 +120,7 @@ def _registry_tab(df: pd.DataFrame) -> None:
             st.success(f"{target}을(를) 서비스 중으로 전환했습니다.", icon="✅")
             st.rerun()
     with col2:
+        _rollback_control(frame)
         archivable = frame[frame["status"] != registry.STATUS_ARCHIVED]["version"].astype(str).tolist()
         if archivable:
             to_archive = st.selectbox("보관할 버전", archivable, key="p4_archive_pick")
@@ -139,6 +140,31 @@ def _registry_tab(df: pd.DataFrame) -> None:
         )
         if run:
             st.json(run)
+
+
+def _rollback_control(frame: pd.DataFrame) -> None:
+    """직전 서비스 버전으로 되돌린다.
+
+    버전을 골라 승격하는 것과 같은 동작이지만, **어느 버전으로 가야 하는지 고르는 일**이
+    사람에게는 어렵다. 새 모델이 더 나빴을 때 급히 되돌려야 하는 상황이면 더 그렇다.
+    직전에 쓰던 버전을 찾아 한 번에 되돌린다.
+    """
+    target = registry.rollback_target(frame)
+    if target is None:
+        st.caption("되돌릴 이전 서비스 버전이 없습니다. (한 번도 교체하지 않았습니다)")
+        return
+
+    version = str(target["version"])
+    recall = target.get("recall")
+    detail = f" · 재현율 {float(recall):.3f}" if pd.notna(recall) else ""
+    st.caption(f"직전 서비스 버전: **{version}**{detail} (승격 {target.get('promoted_at', '—')})")
+    if st.button(f"↩️ {version}(으)로 되돌리기", key="p4_rollback_do"):
+        restored = registry.rollback()
+        st.success(
+            f"{restored}(으)로 되돌렸습니다. 새 모델이 더 나빴다면 이렇게 즉시 복구합니다.",
+            icon="↩️",
+        )
+        st.rerun()
 
 
 def _promotion_gate(frame: pd.DataFrame, version: str) -> bool:
@@ -843,6 +869,12 @@ def _scenario_tab(df: pd.DataFrame) -> None:
         "이제 **드리프트 감시 · 성능 추이 · 재학습 판단 · 판정 이력** 탭에 값이 채워져 있습니다. "
         "차례로 열어 확인하세요.",
         icon="✅",
+    )
+    st.info(
+        "**그 다음은 이렇게 이어집니다.** 3단계로 돌아가 다시 학습하고 새 버전을 승격합니다. "
+        "새 모델이 오히려 더 나쁘면 **모델 레지스트리** 탭의 `↩️ 되돌리기`로 직전 버전으로 "
+        "즉시 복구할 수 있습니다 — 승격할 때 모델 파일을 버전 폴더에 복사해 두기 때문입니다.",
+        icon="🔁",
     )
     st.warning(
         "여기서 나온 수치는 **화면 시연용이지 모델 성능 근거가 아닙니다.** "

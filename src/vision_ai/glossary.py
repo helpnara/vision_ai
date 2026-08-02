@@ -256,7 +256,9 @@ class FeatureFamily:
 # 접두사가 긴 것부터 검사한다 (`lap_var`가 `lap`보다 먼저 잡히도록).
 FEATURE_FAMILIES: tuple[tuple[str, FeatureFamily], ...] = (
     ("gray", FeatureFamily("이미지 밝기", "조명 밝기나 노출 설정이 바뀌었을 가능성")),
-    ("hist", FeatureFamily("밝기 분포 모양", "조명 방향이 바뀌었거나 배경/소재가 달라졌을 가능성")),
+    # 실데이터 측정에서 밝기를 올렸을 때 이 계열이 가장 크게 튀었다. 밝기가 변하면 히스토그램
+    # 구간이 통째로 밀리기 때문이다. 그래서 "조명 방향"보다 밝기를 먼저 짚는다.
+    ("hist", FeatureFamily("밝기 분포 모양", "조명 밝기나 방향이 바뀌었을 가능성 (노출 설정 포함)")),
     ("lap", FeatureFamily("경계의 뚜렷함(선명도)", "카메라 초점이 틀어졌거나 진동·흔들림이 있을 가능성")),
     ("hf", FeatureFamily("미세한 무늬 성분", "초점 저하 또는 이미지 압축·해상도 변경 가능성")),
     ("sobel", FeatureFamily("윤곽선의 세기", "제품 모양이나 놓인 각도가 달라졌을 가능성")),

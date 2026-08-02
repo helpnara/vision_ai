@@ -549,9 +549,10 @@ def retraining_signals(
 def new_labels_since(promoted_at, events: pd.DataFrame | None = None) -> int:
     """승격 시점 이후 사람이 남긴 라벨 이벤트 수.
 
-    타임스탬프가 초 단위라 승격과 **같은 초**에 기록된 라벨이 생길 수 있다. 경계를
-    포함(`>=`)해 세는 이유는, 빠뜨리면 재학습 시점이 늦어지기 때문이다 — 이 프로젝트에서는
-    한 건을 더 세는 쪽이 한 건을 놓치는 쪽보다 안전하다.
+    라벨 시각은 **초 단위**로 기록되는데 승격 시각은 마이크로초까지 남는다(같은 초에 일어난
+    승격들의 순서를 롤백이 구분해야 하기 때문이다). 그대로 비교하면 승격과 같은 초에 남긴
+    라벨이 항상 누락되므로, **경계를 초 단위로 내림**한 뒤 경계를 포함(`>=`)해 센다.
+    빠뜨리면 재학습 시점이 늦어지므로, 한 건을 더 세는 쪽이 놓치는 쪽보다 안전하다.
     """
     events = labeling.load_events() if events is None else events
     if events.empty or promoted_at is None or pd.isna(promoted_at):
@@ -560,7 +561,7 @@ def new_labels_since(promoted_at, events: pd.DataFrame | None = None) -> int:
     cutoff = pd.to_datetime(promoted_at, errors="coerce", utc=True)
     if pd.isna(cutoff):
         return 0
-    return int((timestamps >= cutoff).sum())
+    return int((timestamps >= cutoff.floor("s")).sum())
 
 
 # --- 판정 이력 조회 ---------------------------------------------------------

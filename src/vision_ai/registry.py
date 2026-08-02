@@ -256,7 +256,9 @@ def promote(version: str) -> None:
     if version not in set(registry["version"].astype(str)):
         raise ValueError(f"등록되지 않은 버전입니다: {version}")
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # 초 단위로 적으면 같은 초에 일어난 승격들의 순서를 구분할 수 없다.
+    # 롤백은 "직전에 쓰던 것"을 찾아야 하므로 순서가 뒤집히면 엉뚱한 버전으로 되돌아간다.
+    now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
     versions = registry["version"].astype(str)
     registry.loc[registry["status"] == STATUS_PRODUCTION, "status"] = STATUS_ARCHIVED
     registry.loc[versions == version, "status"] = STATUS_PRODUCTION
@@ -272,6 +274,41 @@ def archive(version: str) -> None:
         raise ValueError(f"등록되지 않은 버전입니다: {version}")
     registry.loc[versions == version, "status"] = STATUS_ARCHIVED
     _save_registry(registry)
+
+
+def rollback_target(registry: pd.DataFrame | None = None) -> pd.Series | None:
+    """되돌릴 이전 서비스 버전. 없으면 None.
+
+    "직전에 쓰던 것"은 **보관된 것 중 가장 최근에 승격됐던 버전**이다. 등록 순서로 고르면
+    안 된다 — 나중에 등록한 것을 먼저 승격했다가 되돌리는 경우가 있기 때문이다.
+    """
+    registry = load_registry() if registry is None else registry
+    if registry.empty:
+        return None
+
+    archived = registry[
+        (registry["status"] == STATUS_ARCHIVED) & registry["promoted_at"].notna()
+    ]
+    if archived.empty:
+        return None
+    order = pd.to_datetime(archived["promoted_at"], errors="coerce", utc=True)
+    if order.isna().all():
+        return None
+    return archived.loc[order.idxmax()]
+
+
+def rollback() -> str | None:
+    """직전 서비스 버전으로 되돌린다. 되돌릴 것이 없으면 None.
+
+    되돌리기는 `promote`와 같은 동작이다. 다만 **어느 버전으로 가야 하는지 고르는 일**이
+    사람에게는 어렵다 — 그래서 대상을 찾아 주는 것이 이 함수의 몫이다.
+    """
+    target = rollback_target()
+    if target is None:
+        return None
+    version = str(target["version"])
+    promote(version)
+    return version
 
 
 def production() -> pd.Series | None:

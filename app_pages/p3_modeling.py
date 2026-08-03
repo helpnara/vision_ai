@@ -22,6 +22,7 @@ from vision_ai import (
     report,
     settings as user_settings,
     storage,
+    ui,
     viz,
 )
 
@@ -240,10 +241,6 @@ def _baseline_tab(df: pd.DataFrame) -> None:
         return
 
     labeled = _labeled(df)
-    dataset = _ensure_dataset(labeled)
-    if dataset is None:
-        return
-    masks = _split_masks(dataset, labeled)
 
     col1, col2, col3 = st.columns(3)
     kind = col1.selectbox(
@@ -265,8 +262,11 @@ def _baseline_tab(df: pd.DataFrame) -> None:
         help="이 재현율을 만족하는 임계값 중 오탐이 가장 적은 값을 자동 선택한다.",
     )
 
-    n_train = int(masks[config.SPLIT_TRAIN].sum())
-    n_eval = int(masks[eval_split].sum())
+    # 장수는 라벨 표만 세면 알 수 있다. 특징 추출은 학습을 누른 뒤로 미룬다 —
+    # 화면을 열기만 해도 전량 추출하면 4,584장 기준 90초를 기다려야 한다.
+    splits = labeled["split"].astype(str)
+    n_train = int((splits == config.SPLIT_TRAIN).sum())
+    n_eval = int((splits == eval_split).sum())
     st.caption(f"학습 {n_train:,}장 · 평가({eval_split}) {n_eval:,}장")
     if n_eval == 0:
         st.error(f"`{eval_split}` 분할에 이미지가 없습니다.", icon="🚧")
@@ -275,7 +275,14 @@ def _baseline_tab(df: pd.DataFrame) -> None:
     if not st.button("🧠 학습 후 평가", type="primary", key="p3_bl_run"):
         return
 
+    dataset = _ensure_dataset(labeled)
+    if dataset is None:
+        return
+    masks = _split_masks(dataset, labeled)
     train_mask, eval_mask = masks[config.SPLIT_TRAIN], masks[eval_split]
+    if not eval_mask.any():
+        st.error(f"`{eval_split}` 분할에서 특징을 뽑을 수 있는 이미지가 없습니다.", icon="🚧")
+        return
     try:
         with st.spinner("학습 중..."):
             model = models.BaselineModel(
@@ -794,7 +801,14 @@ def _business_impact(metrics: dict) -> dict:
         for column in display.columns:
             if "장당" in column:
                 display[column] = display[column].map(lambda v: f"{v:,.0f}")
-        st.dataframe(display, hide_index=True, width="stretch")
+        ui.responsive_table(
+            display,
+            key="impact_by_prevalence",
+            title_column="불량률",
+            hide_index=True,
+            width="stretch",
+            column_config=ui.table_columns(display),
+        )
     return impact
 
 
@@ -965,7 +979,9 @@ def _experiments_tab() -> None:
         st.info("아직 기록된 실행이 없습니다. 모델을 학습하면 자동으로 남습니다.", icon="🧪")
         return
 
-    st.dataframe(runs, hide_index=True, width="stretch")
+    st.dataframe(
+        runs, hide_index=True, width="stretch", column_config=ui.table_columns(runs)
+    )
 
     best = runs.dropna(subset=["recall"])
     if not best.empty:

@@ -21,6 +21,7 @@ from vision_ai import (
     serving,
     settings as user_settings,
     storage,
+    ui,
     viz,
 )
 
@@ -465,7 +466,11 @@ def _drift_tab(df: pd.DataFrame) -> None:
     ].copy()
     # 내부 특징명만으로는 무엇이 변했는지 알 수 없다. 뜻을 나란히 붙인다.
     display.insert(1, "무엇을 재는가", [glossary.feature_meaning(f) for f in display["feature"]])
-    st.dataframe(display.round(4), hide_index=True, width="stretch")
+    display = display.round(4)
+    st.dataframe(
+        display, hide_index=True, width="stretch",
+        column_config=ui.table_columns(display),
+    )
 
     if drift["psi"].notna().any():
         st.bar_chart(
@@ -547,7 +552,15 @@ def _performance_tab(df: pd.DataFrame) -> None:
     st.markdown("**버전별 실측 성능**")
     by_version = monitoring.performance_by_version(feedback)
     if not by_version.empty:
-        st.dataframe(by_version.round(4), hide_index=True, width="stretch")
+        by_version = by_version.round(4)
+        ui.responsive_table(
+            by_version,
+            key="perf_by_version",
+            title_column="version",
+            hide_index=True,
+            width="stretch",
+            column_config=ui.table_columns(by_version),
+        )
 
     st.markdown("**기간별 추이**")
     trend = monitoring.performance_trend(feedback)

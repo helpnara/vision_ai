@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, glossary, ingest, quality, storage
+from vision_ai import config, datasets, glossary, ingest, quality, storage, ui
 
 FIT_STARS = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2: "★★☆☆☆", 1: "★☆☆☆☆"}
 
@@ -47,8 +47,10 @@ def _catalog_tab() -> None:
     # 열이 7개라 좁은 화면에서는 폭에 맞추려다 글자가 뭉개진다. 폭을 지정해 찌그러뜨리는
     # 대신 가로 스크롤이 생기게 하고, 이름 열은 고정해 스크롤해도 어느 줄인지 잃지 않게 한다.
     # ⭐ 표시는 별도 열이었으나 이름 앞에 붙여 열을 하나 줄였다.
-    st.dataframe(
+    ui.responsive_table(
         table,
+        key="catalog",
+        title_column="데이터셋",
         hide_index=True,
         width="stretch",
         column_config={

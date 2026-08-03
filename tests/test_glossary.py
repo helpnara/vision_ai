@@ -224,3 +224,29 @@ def test_core_screen_terms_are_covered():
 
 def test_unknown_term_returns_empty():
     assert glossary.term("없는용어") == ""
+
+
+# --- 표의 열 도움말 (G8) ----------------------------------------------------
+
+def test_column_help_reuses_the_metric_dictionary():
+    """열 도움말과 지표 캡션이 다른 말을 하면, 같은 값을 화면마다 다르게 설명하게 된다."""
+    assert glossary.column_help("recall") == glossary.caption("recall")
+    assert glossary.column_help("재현율") == glossary.caption("recall")
+
+
+def test_every_metric_alias_points_at_a_real_metric():
+    for column, key in glossary._COLUMN_TO_METRIC.items():
+        assert key in glossary.METRICS, f"{column} → {key} 는 없는 지표입니다"
+
+
+def test_confusion_matrix_abbreviations_are_spelled_out():
+    """tp/fp/fn/tn은 약어라 처음 보면 무엇의 줄임인지 알 수 없다."""
+    for name in ("tp", "fp", "fn", "tn"):
+        assert glossary.column_help(name), f"{name} 설명이 없습니다"
+    assert "미탐" in glossary.column_help("fn")
+    assert "오탐" in glossary.column_help("fp")
+
+
+def test_unknown_column_gets_no_help():
+    assert glossary.column_help("created_at") == ""
+    assert glossary.column_help("없는열") == ""

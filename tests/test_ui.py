@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 
+import pandas as pd
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
@@ -163,6 +164,92 @@ def test_narrow_screens_get_smaller_side_padding():
     assert "@media (max-width: 900px)" in ui._DENSITY_CSS
 
 
+# --- 표의 열 도움말 (G8) ----------------------------------------------------
+
+def test_known_metric_columns_get_help_from_the_glossary():
+    """지표를 지표 카드에서는 설명하고 표에서는 안 하면 같은 값을 다르게 만나게 된다."""
+    frame = pd.DataFrame({"recall": [0.9], "precision": [0.4], "fn": [3]})
+    config = ui.table_columns(frame)
+    assert set(config) == {"recall", "precision", "fn"}
+
+
+def test_columns_without_anything_to_explain_are_left_alone():
+    """뜻이 분명한 열에 굳이 설명을 다는 것은 소음이다."""
+    frame = pd.DataFrame({"version": ["v001"], "created_at": ["2026-08-03"]})
+    assert ui.table_columns(frame) == {}
+
+
+def test_overrides_win_over_the_glossary():
+    frame = pd.DataFrame({"recall": [0.9]})
+    mine = st.column_config.TextColumn(help="직접 쓴 설명")
+    assert ui.table_columns(frame, overrides={"recall": mine})["recall"] is mine
+
+
+# --- 좁은 화면의 표 (G9) ----------------------------------------------------
+
+def _table_script():
+    import pandas as pd
+    import streamlit as st
+
+    from vision_ai import ui
+
+    ui.responsive_table(
+        pd.DataFrame({"이름": ["가", "나"], "값": [1, 2]}),
+        key="demo",
+        title_column="이름",
+        hide_index=True,
+    )
+    st.write("끝")
+
+
+def test_responsive_table_draws_both_the_table_and_the_cards():
+    """서버는 브라우저 폭을 모른다. 둘 다 그려 놓고 CSS로 하나만 보여준다."""
+    at = AppTest.from_function(_table_script)
+    at.run()
+    assert not at.exception
+    assert len(at.dataframe) == 1
+    body = "".join(m.value for m in at.markdown)
+    assert "**가**" in body and "**나**" in body
+
+
+def test_responsive_table_emits_the_swap_rules():
+    at = AppTest.from_function(_table_script)
+    at.run()
+    css = "".join(m.value for m in at.markdown if "<style>" in m.value)
+    assert f"max-width: {ui.CARD_BREAKPOINT_PX}px" in css
+    assert "st-key-demo__table" in css
+    assert "st-key-demo__cards" in css
+
+
+def test_responsive_table_skips_an_empty_frame():
+    at = AppTest.from_function(
+        lambda: ui.responsive_table(pd.DataFrame(), key="empty")
+    )
+    at.run()
+    assert not at.exception
+    assert len(at.dataframe) == 0
+
+
+def _long_table_script():
+    import pandas as pd
+
+    from vision_ai import ui
+
+    ui.responsive_table(
+        pd.DataFrame({"이름": [str(i) for i in range(40)], "값": range(40)}),
+        key="long",
+        card_limit=5,
+    )
+
+
+def test_long_tables_do_not_become_endless_card_stacks():
+    at = AppTest.from_function(_long_table_script)
+    at.run()
+    titles = [m.value for m in at.markdown if m.value.startswith("**")]
+    assert len(titles) == 5
+    assert any("40건 중 5건" in c.value for c in at.caption)
+
+
 # --- 테마 설정 -------------------------------------------------------------
 
 def test_heading_sizes_come_from_config_not_css():
@@ -183,3 +270,35 @@ def test_dark_mode_brightens_the_accent_color():
     light = st.get_option("theme.primaryColor")
     dark = st.get_option("theme.dark.primaryColor")
     assert dark and dark != light
+
+
+# --- 화면을 여는 값 (G11) ---------------------------------------------------
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        "app_pages/home.py",
+        "app_pages/p1_ingest.py",
+        "app_pages/p2_labeling.py",
+        "app_pages/p3_modeling.py",
+        "app_pages/p4_operations.py",
+        "app_pages/p5_settings.py",
+    ],
+)
+def test_opening_a_page_does_no_heavy_work(page):
+    """화면을 여는 것만으로 전량 특징 추출이 일어나면 안 된다.
+
+    3단계 베이스라인 탭이 버튼을 누르기도 전에 라벨된 이미지 전량의 특징을 뽑고 있었다.
+    4,584장 기준 화면 하나 여는 데 92초가 걸렸고, 탭을 누를 때마다 다시 걸렸다.
+    무거운 계산은 사용자가 버튼을 누른 뒤에만 해야 한다.
+    """
+    import time
+
+    at = AppTest.from_file("app.py", default_timeout=120)
+    at.run()
+    started = time.time()
+    at.switch_page(page)
+    at.run()
+    elapsed = time.time() - started
+    assert not at.exception
+    assert elapsed < 10, f"{page} 여는 데 {elapsed:.1f}초 — 버튼 누르기 전에 무거운 계산을 하고 있다"

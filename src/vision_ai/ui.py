@@ -25,9 +25,12 @@ Streamlit이 밖으로 약속한 표식이다. emotion 해시 클래스(``st-emo
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Mapping, Sequence
 
+import pandas as pd
 import streamlit as st
+
+from vision_ai import glossary
 
 RAIL_KEY = "nav_rail"
 """사이드바가 레일(아이콘 전용) 모드인지 나타내는 세션 상태 키."""
@@ -210,3 +213,91 @@ def sidebar_nav(pages: Sequence[st.Page], *, captions: Sequence[str] = ()) -> No
             st.divider()
             for line in captions:
                 st.caption(line)
+
+
+# --- 표 (G8·G9) -------------------------------------------------------------
+
+def table_columns(
+    frame: pd.DataFrame, *, overrides: Mapping[str, object] | None = None
+) -> dict:
+    """표의 열 도움말을 용어 사전에서 자동으로 붙인다.
+
+    지표를 지표 카드에서는 캡션으로 설명해 놓고 표에서는 맨 이름만 내보내면, 같은 값을
+    화면마다 다르게 만나게 된다. 열 이름을 사전에서 찾아 설명이 있으면 붙이고, 없으면
+    건드리지 않는다 — 뜻이 분명한 열에 굳이 설명을 다는 것은 소음이다.
+
+    ``overrides``로 넘긴 열 설정은 그대로 우선한다.
+    """
+    config: dict[str, object] = {}
+    for name in frame.columns:
+        text = glossary.column_help(str(name))
+        if not text:
+            continue
+        if pd.api.types.is_numeric_dtype(frame[name]):
+            config[name] = st.column_config.NumberColumn(help=text)
+        else:
+            config[name] = st.column_config.TextColumn(help=text)
+    config.update(overrides or {})
+    return config
+
+
+CARD_BREAKPOINT_PX = 640
+"""이 폭 이하에서는 표 대신 카드로 보여준다."""
+
+CARD_LIMIT = 12
+"""카드로 펼칠 최대 줄 수. 긴 표를 카드로 늘어놓으면 스크롤이 끝없이 길어진다."""
+
+
+def responsive_table(
+    frame: pd.DataFrame,
+    *,
+    key: str,
+    title_column: str | None = None,
+    column_config: Mapping[str, object] | None = None,
+    card_limit: int = CARD_LIMIT,
+    **dataframe_kwargs,
+) -> None:
+    """넓은 화면에서는 표, 좁은 화면에서는 카드로 보여준다.
+
+    폰에서 표는 가로 스크롤로 볼 수는 있지만, 한 줄을 읽으려면 좌우로 오가야 해서 실제로는
+    잘 안 보게 된다. 줄 하나를 통째로 세워 보여주는 편이 낫다.
+
+    표와 카드를 둘 다 그려 놓고 CSS로 하나만 보인다. Streamlit은 서버에서 화면을 그리므로
+    브라우저 폭을 모르기 때문이다. 줄 수가 적은 표에만 쓸 것 — 로그처럼 긴 표에 쓰면
+    쓰지도 않을 카드를 수백 개 그리게 된다.
+    """
+    if frame.empty:
+        return
+    title_column = title_column or str(frame.columns[0])
+
+    with st.container(key=f"{key}__table"):
+        st.dataframe(frame, column_config=dict(column_config or {}), **dataframe_kwargs)
+
+    with st.container(key=f"{key}__cards"):
+        shown = frame.head(card_limit)
+        for _, row in shown.iterrows():
+            with st.container(border=True):
+                st.markdown(f"**{row[title_column]}**")
+                lines = [
+                    f"- {name}: {row[name]}"
+                    for name in frame.columns
+                    if name != title_column and str(row[name]).strip()
+                ]
+                st.markdown("\n".join(lines))
+        if len(frame) > card_limit:
+            st.caption(
+                f"{len(frame):,}건 중 {card_limit}건만 카드로 봅니다. "
+                "화면을 넓히면 전체가 표로 보입니다."
+            )
+
+    st.markdown(
+        f"""<style>
+@media (max-width: {CARD_BREAKPOINT_PX}px) {{
+  .st-key-{key}__table {{ display: none; }}
+}}
+@media (min-width: {CARD_BREAKPOINT_PX + 1}px) {{
+  .st-key-{key}__cards {{ display: none; }}
+}}
+</style>""",
+        unsafe_allow_html=True,
+    )

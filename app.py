@@ -18,7 +18,7 @@ _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from vision_ai import config  # noqa: E402
+from vision_ai import config, ui  # noqa: E402
 
 st.set_page_config(
     page_title="표면 결함 탐지 파이프라인",
@@ -38,8 +38,13 @@ PAGES = [
     st.Page("app_pages/p5_settings.py", title="설정", icon="🛠️"),
 ]
 
-with st.sidebar:
-    st.caption("비전 기반 표면 결함 탐지 (제조업 PoC)")
-    st.caption("데이터: 오픈 데이터셋 + 직접 촬영 (사내 데이터 미사용)")
+CAPTIONS = (
+    "비전 기반 표면 결함 탐지 (제조업 PoC)",
+    "데이터: 오픈 데이터셋 + 직접 촬영 (사내 데이터 미사용)",
+)
 
-st.navigation(PAGES).run()
+# 기본 메뉴를 숨기고 직접 그린다. 접었을 때 아이콘만 남는 레일 모드를 쓰기 위해서다.
+page = st.navigation(PAGES, position="hidden")
+ui.apply_chrome()
+ui.sidebar_nav(PAGES, captions=CAPTIONS)
+page.run()

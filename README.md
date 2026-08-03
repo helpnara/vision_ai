@@ -189,6 +189,7 @@ src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
   storage.py               manifest 읽기/쓰기, 중복 제거
   datasets.py              오픈 데이터셋 카탈로그, 폴더 구조 파서
   quality.py               이미지 품질 점검
+  ui.py                    화면 밀도 · 사이드바 레일 내비게이션
   guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장)
   glossary.py              지표 설명 · 결과 판정 · 용어 · 임의값 출처
   quickstart.py            빠른 시작 (생성→분할→학습→승격 한 번에)
@@ -262,6 +263,13 @@ PYTHONPATH=src python -m pytest tests/ -q
 - `requirements.txt` — 의존성. `opencv-python-headless`를 쓰므로 `packages.txt`(apt 패키지)가 필요 없다.
   일반 `opencv-python`으로 바꾸면 `libGL.so.1` 오류로 기동에 실패한다.
 - `.streamlit/config.toml` — 테마·업로드 상한. 서버 주소/포트는 고정하지 않는다(클라우드가 지정).
+  글자 크기(`baseFontSize`·`headingFontSizes`·`metricValueFontSize`)도 여기서 줄인다. 기본값은
+  발표 슬라이드에 가까워서 작업용으로는 한 화면에 들어오는 정보가 너무 적다. CSS를 주입하지
+  않고 Streamlit이 공식 지원하는 테마 옵션만 쓰므로 버전이 올라가도 깨지지 않는다.
+- 여백과 사이드바 레일 폭은 테마 옵션으로 다룰 수 없어 `src/vision_ai/ui.py`에서 CSS로 보정한다.
+  선택자는 `data-testid`만 쓴다 — `st-emotion-cache-*` 클래스는 빌드마다 바뀐다.
+  사이드바는 **펼침 / 레일(아이콘만) / 숨김** 세 가지 상태를 가진다. 레일에서도 현재 페이지에
+  배경 표시가 남아 "지금 몇 단계인지"를 잃지 않는다.
 - `.streamlit/secrets.toml.example` — 시크릿 형식. 실제 `secrets.toml`은 커밋하지 않고
   앱 설정 화면(Settings → Secrets)에 붙여넣는다. Streamlit이 최상위 시크릿을 환경변수로도
   올려주므로 코드는 `os.environ`만 읽으면 된다.

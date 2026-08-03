@@ -33,19 +33,43 @@ def _catalog_tab() -> None:
     table = pd.DataFrame(
         [
             {
-                "데이터셋": d.name,
-                "기본": "⭐" if d.is_default else "",
-                "key": d.key,
+                "데이터셋": ("⭐ " if d.is_default else "") + d.name,
                 "일상 적합도": FIT_STARS.get(d.everyday_fit, ""),
-                "카테고리 수": len(d.categories),
-                "라이선스": d.license,
                 "상업적 이용": d.commercial_use,
+                "라이선스": d.license,
+                "카테고리 수": len(d.categories),
                 "폴더 구조": d.layout,
+                "key": d.key,
             }
             for d in catalog
         ]
     )
-    st.dataframe(table, hide_index=True, width="stretch")
+    # 열이 7개라 좁은 화면에서는 폭에 맞추려다 글자가 뭉개진다. 폭을 지정해 찌그러뜨리는
+    # 대신 가로 스크롤이 생기게 하고, 이름 열은 고정해 스크롤해도 어느 줄인지 잃지 않게 한다.
+    # ⭐ 표시는 별도 열이었으나 이름 앞에 붙여 열을 하나 줄였다.
+    st.dataframe(
+        table,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "데이터셋": st.column_config.TextColumn(width="medium", pinned=True),
+            "일상 적합도": st.column_config.TextColumn(
+                width="small",
+                help="일상 사물 촬영본으로 이 앱을 시험해 볼 때의 적합도 (별 5개가 가장 적합)",
+            ),
+            "상업적 이용": st.column_config.TextColumn(
+                width="medium", help="회사 업무로 연장할 수 있는지. 원본 배포 페이지에서 재확인할 것"
+            ),
+            "라이선스": st.column_config.TextColumn(width="medium"),
+            "카테고리 수": st.column_config.NumberColumn(width="small"),
+            "폴더 구조": st.column_config.TextColumn(
+                width="small", help="'로컬 폴더 임포트' 탭이 이 구조로 폴더를 읽는다"
+            ),
+            "key": st.column_config.TextColumn(
+                width="small", help="스크립트에서 데이터셋을 가리킬 때 쓰는 식별자"
+            ),
+        },
+    )
 
     st.markdown("#### 상세 정보")
     selected_name = st.selectbox(

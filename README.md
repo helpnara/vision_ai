@@ -266,10 +266,13 @@ PYTHONPATH=src python -m pytest tests/ -q
   글자 크기(`baseFontSize`·`headingFontSizes`·`metricValueFontSize`)도 여기서 줄인다. 기본값은
   발표 슬라이드에 가까워서 작업용으로는 한 화면에 들어오는 정보가 너무 적다. CSS를 주입하지
   않고 Streamlit이 공식 지원하는 테마 옵션만 쓰므로 버전이 올라가도 깨지지 않는다.
-- 여백과 사이드바 레일 폭은 테마 옵션으로 다룰 수 없어 `src/vision_ai/ui.py`에서 CSS로 보정한다.
-  선택자는 `data-testid`만 쓴다 — `st-emotion-cache-*` 클래스는 빌드마다 바뀐다.
-  사이드바는 **펼침 / 레일(아이콘만) / 숨김** 세 가지 상태를 가진다. 레일에서도 현재 페이지에
-  배경 표시가 남아 "지금 몇 단계인지"를 잃지 않는다.
+  `base`는 고정하지 않는다. 비워 두면 보는 사람의 밝게/어둡게 설정을 따라간다.
+- 여백·사이드바 레일 폭·탭 줄바꿈은 테마 옵션으로 다룰 수 없어 `src/vision_ai/ui.py`에서 CSS로
+  보정한다. 선택자는 `data-testid`와 위젯 key가 만드는 `st-key-*`만 쓴다 — 둘 다 Streamlit이
+  밖으로 약속한 표식이고, `st-emotion-cache-*` 클래스는 빌드마다 바뀐다.
+  사이드바는 **펼침 / 레일(아이콘만)** 을 오가고, 레일에서도 현재 페이지에 배경 표시가 남아
+  "지금 몇 단계인지"를 잃지 않는다. 접기 버튼은 화면 폭에 따라 의미가 달라진다 — 넓은 화면에서는
+  레일 토글, 640px 이하에서는 Streamlit 기본 동작(패널 치우기)이며, 보이는 버튼은 항상 하나다.
 - `.streamlit/secrets.toml.example` — 시크릿 형식. 실제 `secrets.toml`은 커밋하지 않고
   앱 설정 화면(Settings → Secrets)에 붙여넣는다. Streamlit이 최상위 시크릿을 환경변수로도
   올려주므로 코드는 `os.environ`만 읽으면 된다.

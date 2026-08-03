@@ -102,25 +102,84 @@ def test_density_css_is_always_applied():
     assert "stMainBlockContainer" in css
 
 
-@pytest.mark.parametrize("css", [ui._DENSITY_CSS, ui._RAIL_CSS])
+@pytest.mark.parametrize("css", [ui._DENSITY_CSS, ui._NAV_CSS, ui._RAIL_CSS])
 def test_css_never_depends_on_emotion_class_names(css):
     """st-emotion-cache-* 는 빌드마다 바뀌는 값이라 선택자로 쓰면 안 된다."""
     assert "st-emotion-cache" not in css
 
 
-def test_css_selectors_are_all_test_ids():
-    combined = ui._DENSITY_CSS + ui._RAIL_CSS
-    selectors = re.findall(r"^([^@{}\n][^{\n]*)\{", combined, flags=re.MULTILINE)
+def test_css_selectors_use_only_stable_hooks():
+    """data-testid와 위젯 key가 만드는 st-key-* 만 허용한다. 둘 다 Streamlit이 밖으로
+    약속한 표식이고, 그 밖의 선택자는 버전이 올라가면 조용히 어긋난다."""
+    combined = ui._DENSITY_CSS + ui._NAV_CSS + ui._RAIL_CSS
+    selectors = re.findall(r"^\s*([^@{}\n][^{\n]*)\{", combined, flags=re.MULTILINE)
     assert selectors, "선택자를 하나도 못 찾았다면 테스트가 잘못된 것이다"
     for selector in selectors:
-        assert "data-testid" in selector, f"testid 없는 선택자: {selector.strip()}"
+        assert "data-testid" in selector or "st-key-" in selector, (
+            f"안정적이지 않은 선택자: {selector.strip()}"
+        )
+
+
+# --- 접기 버튼은 하나뿐 -----------------------------------------------------
+
+def test_only_one_collapse_button_is_rendered():
+    """기본 « 버튼과 레일 토글이 나란히 보이면 같은 자리에 기능이 둘이라 헷갈린다.
+    넓은 화면에서는 기본 버튼을 숨기고, 좁은 화면에서는 반대로 레일 토글을 숨긴다."""
+    wide = f"@media (min-width: {ui.MOBILE_MAX_PX + 1}px)"
+    narrow = f"@media (max-width: {ui.MOBILE_MAX_PX}px)"
+    assert wide in ui._NAV_CSS and narrow in ui._NAV_CSS
+    wide_block = ui._NAV_CSS.split(wide)[1].split(narrow)[0]
+    narrow_block = ui._NAV_CSS.split(narrow)[1]
+    assert "stSidebarCollapseButton" in wide_block
+    assert f"st-key-{ui.TOGGLE_KEY}" in narrow_block
+
+
+def test_the_toggle_keeps_its_key():
+    """CSS가 st-key-* 로 이 버튼을 집어내므로 key가 바뀌면 자리 잡기가 통째로 깨진다."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    assert at.sidebar.button[0].key == ui.TOGGLE_KEY
+    assert f"st-key-{ui.TOGGLE_KEY}" in ui._NAV_CSS
+
+
+def test_the_toggle_has_no_text_label():
+    """헤더 자리에 올라가므로 아이콘만 남아야 한다. 설명은 툴팁으로 준다."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    button = at.sidebar.button[0]
+    assert button.label == ""
+    assert button.help
+
+
+# --- 좁은 화면 (G5·G6) ------------------------------------------------------
+
+def test_tabs_wrap_instead_of_scrolling():
+    """4단계는 탭이 7개다. 가로 스크롤이면 뒤쪽 탭이 화면 밖으로 밀려 '없는 것'이 된다."""
+    assert "flex-wrap: wrap" in ui._DENSITY_CSS
+    assert "stTabsScrollRight" in ui._DENSITY_CSS
+
+
+def test_narrow_screens_get_smaller_side_padding():
+    assert "@media (max-width: 900px)" in ui._DENSITY_CSS
 
 
 # --- 테마 설정 -------------------------------------------------------------
 
 def test_heading_sizes_come_from_config_not_css():
     """글자 크기는 Streamlit이 공식 지원하는 테마 옵션으로 다뤄야 버전 업에 안전하다."""
-    assert "font-size" not in ui._DENSITY_CSS.replace("font-size: 1.3rem", "")
+    assert "font-size" not in ui._DENSITY_CSS
     sizes = st.get_option("theme.headingFontSizes")
     assert sizes, "config.toml에 headingFontSizes가 없다"
     assert sizes[0] != "2.75rem", "h1이 기본값 그대로다"
+
+
+def test_theme_follows_the_viewers_light_dark_setting():
+    """base를 고정하면 어둡게 쓰는 사람에게도 흰 화면만 나온다 (G7)."""
+    assert not st.get_option("theme.base")
+
+
+def test_dark_mode_brightens_the_accent_color():
+    """#2563eb는 어두운 배경에서 묻힌다. 어두운 테마용 값이 따로 있어야 한다."""
+    light = st.get_option("theme.primaryColor")
+    dark = st.get_option("theme.dark.primaryColor")
+    assert dark and dark != light

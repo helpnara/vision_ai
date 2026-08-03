@@ -13,7 +13,8 @@ gatherUsageStats = false
 maxUploadSize = 200
 
 [theme]
-base = "light"
+# base를 고정하지 않는다. 비워 두면 Streamlit이 브라우저·OS의 밝게/어둡게 설정을 따라간다.
+# 예전에는 base = "light"로 못박아, 어둡게 쓰는 사람에게도 흰 화면만 나왔다.
 primaryColor = "#2563eb"
 
 # 글자 크기 — 기본값은 발표용 슬라이드에 가깝게 커서, 실제로 데이터를 보며 작업할 때
@@ -29,3 +30,14 @@ headingFontWeights = [700, 600, 600, 600, 600, 600]
 # 기본값 2.25rem. AUROC·재현율 같은 지표를 여러 개 나란히 놓기 때문에 줄인다.
 metricValueFontSize = "1.5rem"
 codeFontSize = "0.8rem"
+
+[theme.dark]
+# primaryColor는 두 가지로 동시에 쓰인다 — 강조 요소의 색이면서 기본 버튼의 '배경'이다.
+# 그래서 어두운 배경에 맞춰 밝히기만 하면 버튼 위 흰 글씨가 안 읽힌다. 실측 대비:
+#   #60a5fa  흰글씨 2.54 : 배경 7.43   ← 버튼 글자가 안 읽힘
+#   #3b82f6  흰글씨 3.68 : 배경 5.14   ← 일반 글자 기준(4.5) 미달
+#   #2f6fe4  흰글씨 4.65 : 배경 4.06   ← 둘 다 통과
+# 링크는 배경이 아니라 글자색이라 제약이 달라 따로 더 밝게 둔다(배경 대비 11.3).
+# 글자 크기 등 나머지 값은 [theme]에서 그대로 상속된다.
+primaryColor = "#2f6fe4"
+linkColor = "#7dd3fc"

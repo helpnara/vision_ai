@@ -24,7 +24,9 @@ st.set_page_config(
     page_title="표면 결함 탐지 파이프라인",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    # "auto" — 넓은 화면에서는 펼치고, 폰처럼 좁은 화면에서는 접은 채로 연다.
+    # "expanded"로 못박으면 폰에서 300px 사이드바가 본문을 거의 다 덮는다.
+    initial_sidebar_state="auto",
 )
 
 config.ensure_dirs()

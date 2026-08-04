@@ -22,6 +22,8 @@
 
 설계 배경과 결정 이력은 [`docs/surface-defect-detection-plan.md`](docs/surface-defect-detection-plan.md)에,
 다음에 할 일은 [`docs/todo.md`](docs/todo.md)에 있다.
+영상에서 프레임을 뽑아 라벨링하는 기능은 [`docs/video-frame-extraction-plan.md`](docs/video-frame-extraction-plan.md)에
+설계안만 있고 아직 구현 전이다.
 
 ## 실측 성능 (VisA PCB 4종)
 

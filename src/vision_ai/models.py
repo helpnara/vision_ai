@@ -317,6 +317,8 @@ class Dataset:
     y: np.ndarray
     image_ids: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    reused: int = 0       # 캐시에서 그대로 가져온 장수
+    extracted: int = 0    # 이번에 새로 계산한 장수
 
     def __len__(self) -> int:
         return len(self.y)
@@ -329,9 +331,19 @@ def build_dataset(
     *,
     loader=None,
     progress=None,
+    use_cache: bool = True,
 ) -> Dataset:
-    """이미지 경로 목록에서 특징 행렬을 만든다. 읽기 실패한 이미지는 제외한다."""
-    from . import viz
+    """이미지 경로 목록에서 특징 행렬을 만든다. 읽기 실패한 이미지는 제외한다.
+
+    한 번 계산한 특징은 ``artifacts/cache/``에 남겨 다음 실행에서 다시 쓴다. 이미지 단위로
+    남기므로, 데이터가 조금 늘어나면 **늘어난 만큼만** 계산한다. 캐시가 잘못 남을 위험보다
+    다시 계산하는 비용이 크기 때문에, 조금이라도 미심쩍으면(파일이 바뀌었거나 특징 정의가
+    달라졌으면) 캐시를 버리고 다시 뽑는다.
+
+    ``progress(done, total)``은 이미지 하나를 처리할 때마다 불린다. 캐시에서 가져온 것도
+    포함해 세므로, 캐시가 채워져 있으면 막대가 훨씬 빠르게 찬다.
+    """
+    from . import feature_cache, viz
 
     load = loader or viz.load_rgb
     rows: list[np.ndarray] = []
@@ -340,17 +352,41 @@ def build_dataset(
     failed: list[str] = []
     ids = list(image_ids) if image_ids is not None else [str(i) for i in range(len(paths))]
 
+    cache = feature_cache.load() if use_cache else None
+    reused = extracted = 0
+
     total = len(paths)
     for index, (path, label, image_id) in enumerate(zip(paths, labels, ids), start=1):
-        image = load(path)
-        if image is None:
-            failed.append(str(path))
+        vector = cache.get(str(image_id), path) if cache is not None else None
+        if vector is None:
+            image = load(path)
+            if image is None:
+                failed.append(str(path))
+                if progress is not None:
+                    progress(index, total)
+                continue
+            vector = features.image_features(image)
+            extracted += 1
+            if cache is not None:
+                cache.put(str(image_id), path, vector)
         else:
-            rows.append(features.image_features(image))
-            kept_labels.append(int(label))
-            kept_ids.append(str(image_id))
+            reused += 1
+
+        rows.append(vector)
+        kept_labels.append(int(label))
+        kept_ids.append(str(image_id))
         if progress is not None:
             progress(index, total)
 
+    if cache is not None and extracted:
+        feature_cache.save(cache)
+
     X = np.stack(rows) if rows else np.empty((0, len(features.FEATURE_NAMES)), dtype=np.float32)
-    return Dataset(X=X, y=np.asarray(kept_labels, dtype=int), image_ids=kept_ids, failed=failed)
+    return Dataset(
+        X=X,
+        y=np.asarray(kept_labels, dtype=int),
+        image_ids=kept_ids,
+        failed=failed,
+        reused=reused,
+        extracted=extracted,
+    )

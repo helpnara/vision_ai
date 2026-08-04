@@ -25,6 +25,7 @@ Streamlit이 밖으로 약속한 표식이다. emotion 해시 클래스(``st-emo
 
 from __future__ import annotations
 
+import time
 from typing import Mapping, Sequence
 
 import pandas as pd
@@ -213,6 +214,71 @@ def sidebar_nav(pages: Sequence[st.Page], *, captions: Sequence[str] = ()) -> No
             st.divider()
             for line in captions:
                 st.caption(line)
+
+
+# --- 오래 걸리는 작업 알리기 (G12) ------------------------------------------
+
+MIN_SAMPLES_FOR_ETA = 12
+"""남은 시간을 말하기 전에 재어 볼 최소 건수. 처음 몇 건은 들쭉날쭉해 값을 못 믿는다."""
+
+
+class Progress:
+    """오래 걸리는 작업의 진행을 알린다.
+
+    막대만 채우면 "얼마나 더 기다려야 하는지"를 알 수 없다. 특징 추출은 4,584장 기준
+    70초가 넘고, 그동안 화면이 멈춘 것처럼 보이면 사람은 새로고침을 누른다. 그래서
+    **왜 오래 걸리는지**를 먼저 말하고, 진행하면서 **남은 시간**을 실측으로 갱신한다.
+
+    남은 시간은 지금까지의 평균 속도로 추정한다. 처음 몇 건은 편차가 커서 믿을 수 없으므로
+    ``MIN_SAMPLES_FOR_ETA``건을 처리하기 전에는 건수만 보여준다.
+    """
+
+    def __init__(self, label: str, *, note: str = "") -> None:
+        self.label = label
+        self.note = note
+        self._bar = st.progress(0.0, text=self._text(0, 0, None))
+        self._note_slot = st.caption(note) if note else None
+        self._started = time.monotonic()
+
+    def _text(self, done: int, total: int, remaining: float | None) -> str:
+        head = f"{self.label} {done:,}/{total:,}" if total else self.label
+        if remaining is None:
+            return head
+        return f"{head} · 남은 시간 약 {_duration(remaining)}"
+
+    def update(self, done: int, total: int) -> None:
+        if total <= 0:
+            return
+        remaining = _eta(done, total, time.monotonic() - self._started)
+        self._bar.progress(min(done / total, 1.0), text=self._text(done, total, remaining))
+
+    def done(self, message: str = "") -> None:
+        """막대를 치우고, 실제로 걸린 시간을 남긴다."""
+        self._bar.empty()
+        if self._note_slot is not None:
+            self._note_slot.empty()
+        elapsed = time.monotonic() - self._started
+        if message:
+            st.caption(f"{message} ({_duration(elapsed)} 걸림)")
+
+
+def _eta(done: int, total: int, elapsed: float) -> float | None:
+    """지금까지의 평균 속도로 본 남은 시간(초). 아직 말할 수 없으면 None.
+
+    처음 몇 건은 편차가 커서, 그걸로 계산한 남은 시간은 사람을 속인다. 차라리 말하지 않는다.
+    """
+    if done < MIN_SAMPLES_FOR_ETA or done >= total or elapsed <= 0:
+        return None
+    return elapsed / done * (total - done)
+
+
+def _duration(seconds: float) -> str:
+    """사람이 읽는 시간. '92.3초'보다 '1분 32초'가 기다릴지 말지 판단하기 쉽다."""
+    seconds = max(int(round(seconds)), 0)
+    if seconds < 60:
+        return f"{seconds}초"
+    minutes, rest = divmod(seconds, 60)
+    return f"{minutes}분 {rest}초" if rest else f"{minutes}분"
 
 
 # --- 표 (G8·G9) -------------------------------------------------------------

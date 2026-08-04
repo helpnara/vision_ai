@@ -302,3 +302,70 @@ def test_opening_a_page_does_no_heavy_work(page):
     elapsed = time.time() - started
     assert not at.exception
     assert elapsed < 10, f"{page} 여는 데 {elapsed:.1f}초 — 버튼 누르기 전에 무거운 계산을 하고 있다"
+
+
+# --- 오래 걸리는 작업 알리기 (G12) ------------------------------------------
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [(0, "0초"), (9.4, "9초"), (59, "59초"), (60, "1분"), (92.3, "1분 32초"), (600, "10분")],
+)
+def test_durations_are_written_the_way_people_say_them(seconds, expected):
+    """'92.3초'보다 '1분 32초'가 기다릴지 말지 판단하기 쉽다."""
+    assert ui._duration(seconds) == expected
+
+
+def test_no_estimate_until_there_is_enough_to_measure():
+    """처음 몇 건은 편차가 커서, 그걸로 계산한 남은 시간은 사람을 속인다."""
+    assert ui._eta(ui.MIN_SAMPLES_FOR_ETA - 1, 1000, elapsed=1.0) is None
+
+
+def test_estimate_scales_with_what_is_left():
+    """100건에 10초 걸렸으면 남은 900건은 90초다."""
+    assert ui._eta(100, 1000, elapsed=10.0) == pytest.approx(90.0)
+
+
+def test_no_estimate_once_the_job_is_done():
+    assert ui._eta(1000, 1000, elapsed=10.0) is None
+
+
+def test_no_estimate_before_any_time_has_passed():
+    """경과 0초로 나누면 0초 남았다고 말하게 된다."""
+    assert ui._eta(100, 1000, elapsed=0.0) is None
+
+
+def _progress_script():
+    from vision_ai import ui
+
+    bar = ui.Progress("특징 추출 중", note="처음 계산하는 이미지라 시간이 걸립니다.")
+    for done in range(1, 31):
+        bar.update(done, 30)
+
+
+def test_progress_says_why_it_is_slow_while_it_runs():
+    """막대만 채우면 화면이 멈춘 것처럼 보인다. 이유를 먼저 말해야 한다."""
+    at = AppTest.from_function(_progress_script)
+    at.run()
+    assert not at.exception
+    assert any("시간이 걸립니다" in c.value for c in at.caption)
+
+
+def test_progress_reports_how_long_it_actually_took():
+    def script():
+        from vision_ai import ui
+
+        bar = ui.Progress("특징 추출 중", note="계산 중")
+        bar.update(5, 5)
+        bar.done("특징 준비 완료")
+
+    at = AppTest.from_function(script)
+    at.run()
+    captions = [c.value for c in at.caption]
+    assert any("특징 준비 완료" in c and "걸림" in c for c in captions)
+    assert not any("계산 중" == c for c in captions), "끝나면 진행 안내는 치워야 한다"
+
+
+def test_progress_survives_a_zero_length_job():
+    at = AppTest.from_function(lambda: ui.Progress("작업 중").update(0, 0))
+    at.run()
+    assert not at.exception

@@ -6,7 +6,7 @@ from dataclasses import fields
 
 import streamlit as st
 
-from vision_ai import config, evaluate, settings
+from vision_ai import config, evaluate, feature_cache, settings
 
 
 def _slider(name: str, current, *, percent: bool) -> float:
@@ -109,6 +109,33 @@ def render() -> None:
         st.rerun()
 
     st.caption(f"저장 위치: `{config.DATA_ROOT / settings.SETTINGS_FILE}` (git 추적 대상 아님)")
+
+    st.divider()
+    _cache_section()
+
+
+def _cache_section() -> None:
+    """특징 캐시 현황과 비우기.
+
+    캐시는 지워도 다시 계산될 뿐이지만, **왜 이 화면에 두는가**가 중요하다. 특징 추출 코드를
+    고쳤는데 결과가 그대로면 캐시를 의심하게 된다. 그때 손댈 곳이 있어야 한다.
+    (특징 이름·입력 크기가 바뀌면 캐시는 자동으로 버려지므로, 평소에는 쓸 일이 없다.)
+    """
+    st.subheader("특징 캐시")
+    info = feature_cache.summary()
+    st.caption(
+        "한 번 계산한 이미지 특징을 저장해 두고 다시 씁니다. 이미지 단위로 저장하므로 "
+        "데이터가 늘어나면 늘어난 만큼만 계산합니다. 지워도 다음 학습 때 다시 만들어집니다."
+    )
+    cols = st.columns(3)
+    cols[0].metric("저장된 이미지", f"{info['count']:,}장")
+    cols[1].metric("파일 크기", f"{info['size_mb']:.1f} MB")
+    with cols[2]:
+        if st.button("🗑️ 캐시 비우기", key="p5_cache_clear", disabled=info["count"] == 0):
+            feature_cache.clear()
+            st.success("비웠습니다. 다음 학습에서 다시 계산합니다.", icon="✅")
+            st.rerun()
+    st.caption(f"저장 위치: `{feature_cache.cache_path()}`")
 
 
 def _preview(candidate: settings.Settings) -> None:

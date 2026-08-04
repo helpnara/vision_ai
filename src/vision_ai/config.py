@@ -25,11 +25,14 @@ INTERIM_DIR = DATA_ROOT / "interim"  # 전처리 중간 산출물
 ARTIFACT_ROOT = _env_path("VISION_AI_ARTIFACT_ROOT", PROJECT_ROOT / "artifacts")
 MODEL_DIR = ARTIFACT_ROOT / "models"
 REPORT_DIR = ARTIFACT_ROOT / "reports"
+CACHE_DIR = ARTIFACT_ROOT / "cache"  # 다시 계산하면 되는 것들 (지워도 무방)
 
 MANIFEST_PATH = DATA_ROOT / "manifest.csv"   # 수집 이미지 인덱스 (1단계)
 LABELS_PATH = DATA_ROOT / "labels.csv"       # 라벨링 결과 (2단계)
 
-ALL_DIRS = (DATA_ROOT, RAW_DIR, INTERIM_DIR, ARTIFACT_ROOT, MODEL_DIR, REPORT_DIR)
+ALL_DIRS = (
+    DATA_ROOT, RAW_DIR, INTERIM_DIR, ARTIFACT_ROOT, MODEL_DIR, REPORT_DIR, CACHE_DIR
+)
 
 
 def ensure_dirs() -> None:

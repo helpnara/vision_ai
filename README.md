@@ -189,7 +189,8 @@ src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
   storage.py               manifest 읽기/쓰기, 중복 제거
   datasets.py              오픈 데이터셋 카탈로그, 폴더 구조 파서
   quality.py               이미지 품질 점검
-  ui.py                    화면 밀도 · 사이드바 레일 · 좁은 화면용 표
+  ui.py                    화면 밀도 · 사이드바 레일 · 좁은 화면용 표 · 진행 표시
+  feature_cache.py         이미지 특징 캐시 (이미지 단위 · artifacts/cache/)
   guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장)
   glossary.py              지표 설명 · 결과 판정 · 용어 · 표의 열 도움말 · 임의값 출처
   quickstart.py            빠른 시작 (생성→분할→학습→승격 한 번에)

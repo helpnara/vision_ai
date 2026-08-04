@@ -12,6 +12,7 @@ from vision_ai import (
     config,
     evaluate,
     experiments,
+    feature_cache,
     features,
     glossary,
     guide,
@@ -74,24 +75,44 @@ def _readiness(df: pd.DataFrame) -> tuple[bool, list[str]]:
 
 
 def _ensure_dataset(labeled: pd.DataFrame) -> models.Dataset | None:
-    """특징 행렬을 만들고 세션에 캐시한다."""
+    """특징 행렬을 만들고 세션에 캐시한다.
+
+    세션 캐시는 새로고침하면 사라지므로, 그 아래에 디스크 캐시가 한 겹 더 있다
+    (`feature_cache`). 이미 계산해 둔 이미지는 다시 뽑지 않는다.
+    """
     signature = _split_signature(labeled)
     cached = st.session_state.get(_DATASET_KEY)
     if cached and cached.get("signature") == signature:
         return cached["dataset"]
 
-    bar = st.progress(0.0, text="특징 추출 중...")
-
-    def on_progress(done: int, total: int) -> None:
-        bar.progress(done / max(total, 1), text=f"특징 추출 중... {done:,}/{total:,}")
+    total = len(labeled)
+    known = feature_cache.load()
+    fresh = sum(
+        1
+        for image_id, path in zip(labeled["image_id"].astype(str), labeled["path_abs"])
+        if known.get(image_id, path) is None
+    )
+    progress = ui.Progress(
+        "특징 추출 중",
+        note=(
+            f"이미지 {total:,}장에서 각각 {len(features.FEATURE_NAMES)}개 값을 계산합니다. "
+            + (
+                f"이 중 {total - fresh:,}장은 전에 계산해 둔 값을 그대로 씁니다."
+                if fresh < total
+                else "처음 계산하는 이미지라 시간이 걸립니다. 다음부터는 저장된 값을 씁니다."
+            )
+        ),
+    )
 
     dataset = models.build_dataset(
         labeled["path_abs"].tolist(),
         labeled["y"].tolist(),
         labeled["image_id"].astype(str).tolist(),
-        progress=on_progress,
+        progress=progress.update,
     )
-    bar.empty()
+    progress.done(
+        f"특징 준비 완료 — 새로 계산 {dataset.extracted:,}장 · 저장분 재사용 {dataset.reused:,}장"
+    )
     if len(dataset) == 0:
         st.error("특징을 추출할 수 있는 이미지가 없습니다.")
         return None

@@ -269,6 +269,34 @@ def _allocate(total: int, ratios: tuple[float, ...]) -> list[int]:
     return counts.tolist()
 
 
+SPLIT_BY_RANDOM = "random"
+SPLIT_BY_GROUP = "group"
+SPLIT_BY_TIME = "time"
+SPLIT_MODES = (SPLIT_BY_GROUP, SPLIT_BY_TIME, SPLIT_BY_RANDOM)
+
+SPLIT_MODE_LABELS = {
+    SPLIT_BY_GROUP: "영상(그룹) 단위로 나누기",
+    SPLIT_BY_TIME: "시간 순서로 나누기",
+    SPLIT_BY_RANDOM: "무작위로 나누기",
+}
+
+
+def image_groups(resolved: pd.DataFrame) -> pd.Series:
+    """이미지가 속한 그룹. 영상에서 뽑은 프레임은 영상 id, 나머지는 자기 자신.
+
+    그룹이 필요한 이유는 하나다 — **같은 영상의 프레임은 서로 너무 비슷하다.** 무작위로
+    나누면 학습에 쓴 것과 거의 같은 장면이 평가에 들어가 성능이 실제보다 높게 나온다.
+    영상 데이터로 넘어갈 때 가장 흔하고 가장 비싼 실수다.
+
+    `group` 열이 비어 있는 예전 데이터는 이미지 하나가 곧 그룹이므로 지금 동작 그대로다.
+    """
+    ids = resolved["image_id"].astype(str)
+    if "group" not in resolved.columns:
+        return ids
+    groups = resolved["group"].astype(str).replace({"nan": "", "None": ""}).fillna("")
+    return groups.where(groups.str.strip() != "", ids)
+
+
 def assign_splits(
     resolved: pd.DataFrame,
     *,
@@ -277,14 +305,25 @@ def assign_splits(
     test: float = 0.2,
     seed: int = 42,
     labeled_only: bool = True,
+    mode: str = SPLIT_BY_GROUP,
 ) -> dict[str, str]:
     """카테고리 × 라벨로 층화하여 train/val/test를 배정한다.
 
     층화하지 않으면 특정 카테고리나 결함 클래스가 한쪽 분할에만 몰려
     평가 결과를 신뢰할 수 없게 된다.
+
+    ``mode``는 **무엇을 하나로 묶어 옮길지**를 정한다.
+
+    * ``group`` (기본) — 같은 영상의 프레임은 통째로 같은 분할로 간다. 영상이 없는
+      데이터에서는 이미지 하나가 곧 그룹이라 무작위와 결과가 같다.
+    * ``time`` — 수집 시각 순으로 앞은 학습, 뒤는 평가. 영상이 하나뿐이라 그룹으로는
+      나눌 수 없을 때 쓴다. 경계 부근 프레임은 여전히 비슷해 누수가 조금 남는다.
+    * ``random`` — 이미지 단위 무작위. **영상 프레임에는 쓰면 안 된다.**
     """
     if resolved.empty:
         return {}
+    if mode not in SPLIT_MODES:
+        raise ValueError(f"지원하지 않는 분할 방식: {mode} (가능: {SPLIT_MODES})")
 
     subset = resolved
     if labeled_only:
@@ -297,16 +336,83 @@ def assign_splits(
     names = (config.SPLIT_TRAIN, config.SPLIT_VAL, config.SPLIT_TEST)
     mapping: dict[str, str] = {}
 
-    for _, group in subset.groupby(["category", "label"], dropna=False, sort=True):
-        ids = group["image_id"].astype(str).to_numpy()
-        ids = ids[rng.permutation(len(ids))]
-        counts = _allocate(len(ids), ratios)
-        start = 0
-        for name, count in zip(names, counts):
-            for image_id in ids[start:start + count]:
-                mapping[str(image_id)] = name
-            start += count
+    for _, stratum in subset.groupby(["category", "label"], dropna=False, sort=True):
+        if mode == SPLIT_BY_TIME:
+            # 시간 순으로 **이어서** 자른다. 영상이 하나뿐이면 그룹으로는 못 나누므로
+            # 앞부분으로 배우고 뒷부분으로 평가하는 것이 그나마 가까운 대용이다.
+            order = "ingested_at" if "ingested_at" in stratum.columns else "image_id"
+            ids = stratum.sort_values([order, "image_id"], kind="stable")["image_id"].astype(str)
+            _assign_in_order(list(ids), _allocate(len(ids), ratios), names, mapping)
+        elif mode == SPLIT_BY_RANDOM:
+            ids = stratum["image_id"].astype(str).to_numpy()
+            ids = ids[rng.permutation(len(ids))]
+            _assign_in_order(list(ids), _allocate(len(ids), ratios), names, mapping)
+        else:
+            members = (
+                stratum.assign(_group=image_groups(stratum).to_numpy())
+                .groupby("_group")["image_id"]
+                .apply(lambda s: [str(v) for v in s])
+                .to_dict()
+            )
+            keys = sorted(members)
+            keys = [keys[i] for i in rng.permutation(len(keys))]
+            for key, bucket in _fit_groups(keys, members, ratios).items():
+                for image_id in members[key]:
+                    mapping[image_id] = names[bucket]
     return mapping
+
+
+def _assign_in_order(ids, counts, names, mapping) -> None:
+    start = 0
+    for name, count in zip(names, counts):
+        for image_id in ids[start:start + count]:
+            mapping[str(image_id)] = name
+        start += count
+
+
+def _fit_groups(keys, members, ratios) -> dict[str, int]:
+    """그룹을 통째로 분할에 배정한다. 한 그룹이 두 분할에 걸치면 누수가 생긴다.
+
+    **큰 그룹부터 가장 덜 찬 분할에 넣는다.** 섞인 순서대로 앞에서 잘라 나가면, 큰 영상이
+    마지막에 오는 순간 평가 분할이 학습보다 커지는 일이 생긴다(실제로 40:2:2:2 구성에서
+    학습 4장 / 평가 40장이 나왔다).
+
+    나누는 기준은 그룹 **개수**가 아니라 그룹이 담은 **이미지 수**다. 영상마다 프레임 수가
+    크게 다르기 때문이다. 크기가 같은 그룹끼리는 섞인 순서를 그대로 따르므로 시드가 바뀌면
+    결과도 바뀐다.
+    """
+    if not keys:
+        return {}
+
+    sizes = {key: len(members.get(key, [])) or 1 for key in keys}
+    total = sum(sizes.values())
+    targets = [total * ratio for ratio in ratios]
+    usable = [index for index, ratio in enumerate(ratios) if ratio > 0] or [0]
+
+    filled = [0.0, 0.0, 0.0]
+    placed: dict[str, int] = {}
+    order = sorted(range(len(keys)), key=lambda i: (-sizes[keys[i]], i))
+
+    for step, position in enumerate(order):
+        key = keys[position]
+        empty = [index for index in usable if index not in set(placed.values())]
+        remaining = len(order) - step
+        if empty and remaining <= len(empty):
+            # 남은 그룹으로는 빈 분할을 채우는 것이 우선이다 — 평가 분할이 비면
+            # 3단계 학습 자체가 막힌다.
+            bucket = empty[0]
+        else:
+            bucket = min(
+                usable,
+                key=lambda index: (
+                    (filled[index] + sizes[key] / 2) / targets[index]
+                    if targets[index] > 0
+                    else float("inf")
+                ),
+            )
+        placed[key] = bucket
+        filled[bucket] += sizes[key]
+    return placed
 
 
 def import_split_csv(csv_source, manifest: pd.DataFrame) -> tuple[dict[str, str], int]:

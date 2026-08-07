@@ -23,6 +23,7 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
     "split",         # train / val / test / unassigned
     "label",         # normal / defect / unlabeled
     "defect_type",   # 결함 유형 키 (없으면 none)
+    "group",         # 분할을 함께 옮길 묶음 (영상 id 등). 비면 이미지 하나가 곧 그룹
     "width",
     "height",
     "channels",

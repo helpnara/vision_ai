@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, glossary, ingest, quality, storage, ui
+from vision_ai import config, datasets, glossary, ingest, quality, storage, ui, video
 
 FIT_STARS = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2: "★★☆☆☆", 1: "★☆☆☆☆"}
 
@@ -268,6 +268,183 @@ def _upload_tab() -> None:
             st.warning(f"이미지로 읽을 수 없는 파일: {', '.join(result.failed[:10])}")
 
 
+def _video_tab() -> None:
+    """영상에서 학습용 프레임을 뽑는다 (설계: docs/video-frame-extraction-plan.md)."""
+    st.markdown(
+        "현장에서 데이터를 모으는 방식은 대체로 **영상 촬영**이다. 영상을 지정하면 "
+        "일정 간격으로 프레임을 뽑아 manifest에 등록한다. 라벨은 2단계에서 붙인다."
+    )
+    st.info(
+        "같은 영상에서 뽑은 프레임은 서로 매우 비슷합니다. 그래서 **영상 id를 그룹으로 달아** "
+        "2단계 분할이 통째로 같은 쪽(학습 또는 평가)에 넣을 수 있게 합니다. "
+        "섞이면 성능이 실제보다 높게 나옵니다.",
+        icon="🔗",
+    )
+
+    with st.expander("영상이 없다면 — 시험용 영상 만들기"):
+        st.caption(
+            "물체가 3초마다 하나씩 지나가고 일부에 흠집이 있는 10초짜리 영상을 만듭니다. "
+            "다운로드 없이 조작을 익혀 볼 수 있습니다. **성능 근거로는 쓸 수 없습니다.**"
+        )
+        if st.button("🎬 시험용 영상 만들기", key="video_sample"):
+            try:
+                made = video.make_sample()
+            except OSError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["video_path"] = str(made)
+                st.success(f"만들었습니다: `{made}`", icon="✅")
+                st.rerun()
+
+    source = st.radio(
+        "영상 지정 방식", ["파일 경로", "업로드"], horizontal=True, key="video_source",
+        help="큰 영상은 업로드 상한(200MB)에 걸리므로 로컬 실행 + 파일 경로가 편합니다.",
+    )
+
+    path: Path | None = None
+    if source == "파일 경로":
+        entered = st.text_input(
+            "영상 파일 경로", key="video_path", placeholder="/home/user/videos/line1.mp4"
+        )
+        if entered:
+            candidate = Path(entered).expanduser()
+            if not candidate.is_file():
+                st.error(f"파일을 찾을 수 없습니다: `{candidate}`")
+            elif not video.is_video(candidate):
+                st.error(f"영상 파일이 아닙니다: `{candidate.suffix}`")
+            else:
+                path = candidate
+    else:
+        uploaded = st.file_uploader(
+            "영상 올리기", type=sorted(e.lstrip(".") for e in video.VIDEO_EXTENSIONS),
+            key="video_upload",
+        )
+        if uploaded is not None:
+            target = config.interim_dir() / "video" / uploaded.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded.getvalue())
+            path = target
+            st.caption(f"저장 위치: `{target}`")
+
+    if path is None:
+        return
+
+    try:
+        info = video.probe(path)
+    except OSError as exc:
+        st.error(str(exc))
+        return
+    if not info.usable:
+        st.error("fps나 프레임 수를 읽을 수 없는 영상입니다.")
+        return
+
+    cols = st.columns(4)
+    cols[0].metric("길이", f"{info.duration_sec:.1f}초")
+    cols[1].metric("fps", f"{info.fps:.0f}")
+    cols[2].metric("전체 프레임", f"{info.frame_count:,}")
+    cols[3].metric("해상도", f"{info.width}×{info.height}")
+
+    plan = _extraction_plan(info)
+    if plan is None:
+        return
+
+    st.caption(plan.reason)
+    if not plan.feasible:
+        st.warning(
+            "**이 촬영으로는 목표 장수를 채울 수 없습니다.** 추출 설정이 아니라 촬영 계획의 "
+            "문제이므로, 프레임을 뽑기 전에 라인 속도나 카메라를 조정하는 편이 낫습니다.",
+            icon="🎥",
+        )
+
+    left, right = st.columns(2)
+    left.metric("예상 추출 장수", f"{plan.expected_frames:,}장")
+    right.metric("초당 추출", f"{plan.per_second:.1f}장")
+
+    col1, col2, col3 = st.columns(3)
+    category = col1.text_input("카테고리", value="video", key="video_category")
+    dedupe = col2.checkbox(
+        "거의 같은 프레임 버리기", value=True, key="video_dedupe",
+        help="정지 구간에서는 같은 그림이 쏟아집니다. 균등 추출만으로는 거를 수 없습니다.",
+    )
+    check_quality = col3.checkbox(
+        "흐린 프레임 버리기", value=False, key="video_quality",
+        help=(
+            "영상 프레임은 정지 이미지보다 전반적으로 흐립니다. 정지 이미지용 기준을 그대로 "
+            "걸면 과하게 버릴 수 있어 기본은 꺼 둡니다."
+        ),
+    )
+
+    if not st.button("🎞️ 프레임 추출 후 등록", type="primary", key="video_run"):
+        return
+
+    progress = ui.Progress(
+        "프레임 추출 중",
+        note=(
+            f"{info.frame_count:,}프레임을 훑으며 {plan.stride}프레임마다 한 장씩 저장합니다. "
+            "건너뛰는 프레임은 디코딩하지 않습니다."
+        ),
+    )
+    try:
+        result, extracted = ingest.ingest_video(
+            path, stride=plan.stride, category=category or "video",
+            similarity=video.DEFAULT_SIMILARITY if dedupe else None,
+            check_quality=check_quality, progress=progress.update,
+        )
+    except OSError as exc:
+        progress.done()
+        st.error(str(exc))
+        return
+    progress.done(extracted.as_message())
+
+    st.success(f"{result.as_message()} · 그룹 `{extracted.video_id}`", icon="✅")
+    if result.duplicates:
+        st.caption(f"이미 등록된 프레임 {result.duplicates:,}건은 건너뛰었습니다.")
+    if extracted.saved:
+        st.markdown("**추출 표본**")
+        for column, sample in zip(st.columns(4), extracted.saved[:4]):
+            column.image(str(sample), width="stretch")
+    st.info("다음 — **2단계 라벨링**에서 결함 구간과 위치를 지정합니다.", icon="➡️")
+
+
+def _extraction_plan(info: "video.VideoInfo"):
+    """간격을 정하는 방법을 고르게 한다.
+
+    CCTV처럼 물체가 불규칙하게 지나가면 라인 속도로 계산할 수 없으므로 초당 장수 지정이
+    기본이다. 컨베이어처럼 조건을 아는 경우에만 계산 모드가 의미가 있다.
+    """
+    mode = st.radio(
+        "추출 간격 정하기",
+        ["초당 장수로 지정", "공정 값으로 계산 (컨베이어)"],
+        horizontal=True, key="video_plan_mode",
+        help="CCTV는 물체 속도가 제각각이라 계산이 성립하지 않습니다. 초당 장수를 쓰세요.",
+    )
+    try:
+        if mode.startswith("초당"):
+            per_second = st.slider(
+                "초당 몇 장", 0.1, min(float(info.fps), 30.0), 2.0, 0.1, key="video_rate"
+            )
+            return video.plan_from_rate(info, per_second=per_second)
+
+        col1, col2, col3 = st.columns(3)
+        field = col1.number_input(
+            "카메라 시야 길이 (m)", 0.01, 100.0, 0.30, 0.01, key="video_fov",
+            help="화면 안에 들어오는 컨베이어 길이",
+        )
+        speed = col2.number_input(
+            "라인 속도 (m/s)", 0.01, 50.0, 0.5, 0.01, key="video_speed"
+        )
+        per_object = int(col3.number_input(
+            "물체당 확보할 장수", 1, 50, video.DEFAULT_FRAMES_PER_OBJECT, 1, key="video_per_object",
+            help="흔들림·가림에 대비한 여유까지 포함한 값",
+        ))
+        return video.plan_from_process(
+            info, field_of_view_m=field, speed_mps=speed, frames_per_object=per_object
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        return None
+
+
 def _synthetic_tab() -> None:
     st.markdown(
         "오픈 데이터셋 다운로드는 용량이 크고 약관 동의가 필요한 경우가 많다. "
@@ -458,6 +635,7 @@ def render() -> None:
     mark = "✅" if has_data else "👉"
     tabs = st.tabs(
         ["🗂️ 오픈 데이터셋 카탈로그", "📁 로컬 폴더 임포트", "⬆️ 이미지 업로드",
+         "🎞️ 영상에서 프레임 추출",
          f"{mark} 🧪 합성 샘플 생성", f"{'✅ ' if has_data else ''}📊 수집 현황"]
     )
     if not has_data:
@@ -469,8 +647,10 @@ def render() -> None:
     with tabs[2]:
         _upload_tab()
     with tabs[3]:
-        _synthetic_tab()
+        _video_tab()
     with tabs[4]:
+        _synthetic_tab()
+    with tabs[5]:
         _status_tab()
 
 

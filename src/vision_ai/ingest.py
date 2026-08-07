@@ -11,12 +11,15 @@ from __future__ import annotations
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Callable, Iterator, Sequence
 
 import cv2
 import numpy as np
 
 from . import config, datasets, quality, storage
+
+if TYPE_CHECKING:
+    from . import video as video_module
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -46,6 +49,7 @@ def _build_record(
     label: str,
     defect_type: str,
     note: str = "",
+    group: str = "",
 ) -> dict | None:
     """파일 하나에 대한 manifest 레코드를 만든다. 디코드 실패 시 None."""
     metrics = quality.assess_file(path)
@@ -61,6 +65,7 @@ def _build_record(
         "split": split,
         "label": label,
         "defect_type": defect_type,
+        "group": group,
         "width": metrics.width,
         "height": metrics.height,
         "channels": metrics.channels,
@@ -465,3 +470,52 @@ def generate_synthetic(
                 cv2.imwrite(str(truth_dir / f"{i:04d}_mask.png"), mask)
 
     return out_dir
+
+
+def ingest_video(
+    path: Path,
+    *,
+    stride: int,
+    category: str,
+    similarity: float | None = None,
+    check_quality: bool = False,
+    limit: int | None = None,
+    progress: ProgressCallback | None = None,
+) -> tuple[IngestResult, "video_module.ExtractResult"]:
+    """영상에서 프레임을 뽑아 manifest에 등록한다.
+
+    **`group`에 영상 id를 넣는 것이 핵심이다.** 같은 영상의 프레임은 서로 너무 비슷해서,
+    무작위로 학습/평가에 나뉘면 성능이 실제보다 높게 나온다. 그룹을 달아 두어야 2단계
+    분할이 통째로 같은 쪽에 넣을 수 있다.
+
+    라벨은 붙이지 않는다(`unlabeled`). 어느 프레임이 결함인지는 2단계에서 정한다.
+    """
+    from . import video as video_module
+
+    extracted = video_module.extract(
+        path, stride=stride, similarity=similarity,
+        check_quality=check_quality, limit=limit, progress=progress,
+    )
+
+    result = IngestResult()
+    records = []
+    for frame_path in extracted.saved:
+        record = _build_record(
+            frame_path,
+            source=f"video:{extracted.video_id}",
+            category=category or "video",
+            split=config.SPLIT_NONE,
+            label=config.LABEL_UNLABELED,
+            defect_type=config.DEFECT_TYPE_NONE,
+            group=extracted.video_id,
+            note="영상 프레임",
+        )
+        if record is None:
+            result.failed.append(str(frame_path))
+        else:
+            records.append(record)
+
+    added, duplicates = storage.append_records(records)
+    result.added = added
+    result.duplicates = duplicates
+    return result, extracted

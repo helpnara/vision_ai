@@ -355,6 +355,48 @@ def _mapping_tab(resolved: pd.DataFrame) -> None:
 
 # --- 데이터 분할 -----------------------------------------------------------
 
+def _split_mode(resolved: pd.DataFrame) -> str:
+    """무엇을 하나로 묶어 옮길지 고르게 한다.
+
+    **고르게 하되, 모르고 고르지는 않게 한다.** 영상 프레임이 있는데 무작위를 고르면
+    학습에 쓴 것과 거의 같은 장면이 평가에 들어가 성능이 실제보다 높게 나온다. 이건
+    화면이 알려주지 않으면 알아채기 어렵다.
+    """
+    groups = labeling.image_groups(resolved)
+    grouped = int((groups != resolved["image_id"].astype(str)).sum())
+
+    mode = st.radio(
+        "무엇을 기준으로 나눌까",
+        list(labeling.SPLIT_MODES),
+        format_func=lambda key: labeling.SPLIT_MODE_LABELS[key],
+        horizontal=True, key="p2_split_mode",
+    )
+
+    if grouped:
+        st.caption(
+            f"영상에서 뽑은 프레임 {grouped:,}장이 있습니다 "
+            f"(영상 {groups[groups != resolved['image_id'].astype(str)].nunique():,}개)."
+        )
+    else:
+        st.caption("영상 프레임이 없어 이미지 하나가 곧 그룹입니다 — 세 방식의 결과가 거의 같습니다.")
+
+    if mode == labeling.SPLIT_BY_GROUP:
+        st.caption("같은 영상의 프레임은 통째로 같은 분할로 갑니다.")
+    elif mode == labeling.SPLIT_BY_TIME:
+        st.caption(
+            "수집 시각 순으로 앞은 학습, 뒤는 평가로 나눕니다. 영상이 하나뿐이라 그룹으로 "
+            "나눌 수 없을 때 씁니다 — 경계 부근 프레임은 여전히 비슷해 누수가 조금 남습니다."
+        )
+    elif grouped:
+        st.warning(
+            "**영상 프레임이 있는데 무작위로 나눕니다.** 같은 영상의 프레임이 학습과 평가에 "
+            "섞여 들어가 **성능이 실제보다 높게 나옵니다.** 벤치마크와 맞추려는 경우가 "
+            "아니라면 '영상(그룹) 단위'를 쓰세요.",
+            icon="⚠️",
+        )
+    return mode
+
+
 def _split_tab(resolved: pd.DataFrame) -> None:
     st.markdown(
         "카테고리 × 라벨로 **층화 분할**한다. 층화하지 않으면 특정 카테고리나 결함 클래스가 "
@@ -377,11 +419,14 @@ def _split_tab(resolved: pd.DataFrame) -> None:
         help="미라벨 이미지는 학습에 쓸 수 없으므로 기본적으로 제외한다.",
     )
 
+    mode = _split_mode(resolved)
+
     if test <= 0:
         st.error("test 비율이 0 이하다. train/val 비율을 줄여야 한다.")
     elif st.button("✂️ 층화 분할 실행", type="primary", key="p2_do_split"):
         mapping = labeling.assign_splits(
-            resolved, train=train, val=val, test=test, seed=int(seed), labeled_only=labeled_only
+            resolved, train=train, val=val, test=test, seed=int(seed),
+            labeled_only=labeled_only, mode=mode,
         )
         if not mapping:
             st.warning("분할할 대상이 없습니다.")

@@ -1,0 +1,180 @@
+"""다중 박스 라벨 테스트.
+
+박스는 **사람이 손으로 그린 결과물**이다. 잘못 덮어쓰면 들인 시간이 그대로 사라진다.
+그래서 저장·불러오기보다 **무엇을 덮어쓰고 무엇을 지키는지**를 먼저 확인한다.
+
+내보내기(COCO/YOLO)는 좌표 규약이 서로 다르다 — COCO는 좌상단+크기, YOLO는 이미지 크기로
+나눈 중심+크기다. 규약을 틀리면 학습이 조용히 엉뚱한 곳을 배운다.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+
+from vision_ai import boxes, config
+
+
+def _box(image_id="img1", x=10, y=20, w=30, h=40, label="scratch", **kwargs):
+    return boxes.Box(image_id=image_id, x=x, y=y, w=w, h=h, label=label, **kwargs)
+
+
+# --- 저장과 불러오기 --------------------------------------------------------
+
+def test_empty_when_nothing_saved(sandbox):
+    assert boxes.load().empty
+
+
+def test_boxes_round_trip(sandbox):
+    boxes.replace("img1", [_box(), _box(x=100, label="dent")])
+    frame = boxes.for_image("img1")
+    assert len(frame) == 2
+    assert set(frame["label"]) == {"scratch", "dent"}
+
+
+def test_one_image_can_hold_many_boxes(sandbox):
+    """이게 이 모듈의 존재 이유다 — manifest의 roi 네 칸으로는 담을 수 없다."""
+    boxes.replace("img1", [_box(x=index * 50) for index in range(5)])
+    assert len(boxes.for_image("img1")) == 5
+
+
+def test_saving_replaces_only_that_image(sandbox):
+    boxes.replace("img1", [_box("img1")])
+    boxes.replace("img2", [_box("img2"), _box("img2", x=99)])
+    assert len(boxes.for_image("img1")) == 1
+    assert len(boxes.for_image("img2")) == 2
+
+
+def test_relabelling_an_image_drops_the_boxes_that_were_removed(sandbox):
+    """한 장을 라벨링하는 행위는 '이 장의 박스는 이것들이다'이지 '하나 더한다'가 아니다."""
+    boxes.replace("img1", [_box(), _box(x=100), _box(x=200)])
+    boxes.replace("img1", [_box()])
+    assert len(boxes.for_image("img1")) == 1
+
+
+def test_zero_pixel_boxes_are_not_stored(sandbox):
+    """끌지 않고 누르기만 해도 선택이 생긴다. 0픽셀 영역을 저장하면 안 된다."""
+    boxes.replace("img1", [_box(w=0), _box(h=0), _box()])
+    assert len(boxes.for_image("img1")) == 1
+
+
+def test_a_corrupt_file_reads_as_empty(sandbox):
+    boxes.boxes_path().write_text("이건 csv가 아니다\x00", encoding="utf-8")
+    assert boxes.load().empty
+
+
+# --- 예전 단일 ROI 이어받기 -------------------------------------------------
+
+def _resolved(**overrides):
+    row = {
+        "image_id": "old1", "roi_x": 5, "roi_y": 6, "roi_w": 70, "roi_h": 80,
+        "defect_type": "dent", "label_source": "human",
+    }
+    row.update(overrides)
+    return pd.DataFrame([row])
+
+
+def test_old_single_roi_is_read_as_one_box(sandbox):
+    found = boxes.from_manifest_roi(_resolved())
+    assert len(found) == 1
+    assert found[0].as_xyxy() == (5, 6, 75, 86)
+    assert found[0].label == "dent"
+
+
+def test_rows_without_a_roi_are_skipped(sandbox):
+    assert boxes.from_manifest_roi(_resolved(roi_x=None)) == []
+
+
+def test_adopting_old_rois_fills_the_box_table(sandbox):
+    assert boxes.adopt_manifest_rois(_resolved()) == 1
+    assert len(boxes.for_image("old1")) == 1
+
+
+def test_adopting_never_overwrites_hand_drawn_boxes(sandbox):
+    """사람이 새로 그린 박스를 옛 ROI로 덮어쓰면 작업을 잃는다."""
+    boxes.replace("old1", [_box("old1", x=999, label="crack")])
+    assert boxes.adopt_manifest_rois(_resolved()) == 0
+
+    kept = boxes.for_image("old1")
+    assert len(kept) == 1 and int(kept.iloc[0]["x"]) == 999
+
+
+def test_adopting_twice_adds_nothing_the_second_time(sandbox):
+    boxes.adopt_manifest_rois(_resolved())
+    assert boxes.adopt_manifest_rois(_resolved()) == 0
+
+
+# --- 현황 ------------------------------------------------------------------
+
+def test_summary_counts_boxes_and_images(sandbox):
+    boxes.replace("img1", [_box(), _box(x=60, label="dent")])
+    boxes.replace("img2", [_box("img2")])
+    info = boxes.summary()
+    assert info == {"boxes": 3, "images": 2, "labels": 2, "per_image": pytest.approx(1.5)}
+
+
+# --- 내보내기 ---------------------------------------------------------------
+
+@pytest.fixture
+def labelled(sandbox):
+    boxes.replace("img1", [_box(label="scratch"), _box(x=100, label="dent")])
+    boxes.replace("img2", [_box("img2", x=1, y=2, w=10, h=20, label="scratch")])
+    manifest = pd.DataFrame(
+        [
+            {"image_id": "img1", "width": 200, "height": 100, "path": "a/img1.png"},
+            {"image_id": "img2", "width": 200, "height": 100, "path": "a/img2.png"},
+        ]
+    )
+    return boxes.load(), manifest
+
+
+def test_coco_keeps_the_top_left_and_size(labelled):
+    frame, manifest = labelled
+    coco = boxes.to_coco(frame, manifest)
+    first = next(a for a in coco["annotations"] if a["bbox"][0] == 10)
+    assert first["bbox"] == [10, 20, 30, 40]
+    assert first["area"] == 1200
+
+
+def test_coco_numbers_categories_from_one(labelled):
+    """COCO의 category_id는 1부터다. 0부터 매기면 학습 쪽에서 클래스가 하나 밀린다."""
+    frame, manifest = labelled
+    coco = boxes.to_coco(frame, manifest)
+    assert sorted(c["id"] for c in coco["categories"]) == [1, 2]
+    assert {c["name"] for c in coco["categories"]} == {"scratch", "dent"}
+
+
+def test_yolo_uses_normalised_centres(labelled):
+    """YOLO는 이미지 크기로 나눈 중심 좌표를 쓴다. 규약을 틀리면 엉뚱한 곳을 배운다."""
+    frame, manifest = labelled
+    texts = boxes.to_yolo(frame, manifest)
+    line = next(l for l in texts["img1"].splitlines() if l.split()[1].startswith("0.125"))
+    _, cx, cy, w, h = line.split()
+    assert float(cx) == pytest.approx((10 + 30 / 2) / 200)
+    assert float(cy) == pytest.approx((20 + 40 / 2) / 100)
+    assert float(w) == pytest.approx(30 / 200)
+    assert float(h) == pytest.approx(40 / 100)
+
+
+def test_yolo_skips_images_with_unknown_size(sandbox):
+    """크기를 모르면 정규화할 수 없다. 틀린 좌표를 내보내느니 건너뛴다."""
+    boxes.replace("img1", [_box()])
+    texts = boxes.to_yolo(boxes.load(), pd.DataFrame([{"image_id": "img1"}]))
+    assert texts == {}
+
+
+def test_class_numbers_are_stable_across_exports(labelled):
+    """번호가 실행마다 달라지면 이미 학습한 모델과 어긋난다."""
+    frame, manifest = labelled
+    assert boxes.class_names(frame) == boxes.class_names(frame)
+    assert boxes.class_names(frame) == sorted(boxes.class_names(frame))
+
+
+def test_exports_are_empty_when_nothing_is_labelled(sandbox):
+    empty = boxes.empty()
+    assert boxes.to_coco(empty, pd.DataFrame())["annotations"] == []
+    assert boxes.to_yolo(empty, pd.DataFrame()) == {}
+
+
+def test_boxes_live_inside_the_project(sandbox):
+    assert boxes.boxes_path().parent == config.data_root()

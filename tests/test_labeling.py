@@ -412,3 +412,95 @@ def test_stats_tracks_progress(visa_like):
     assert stats["verified"] == 1
     assert stats["with_roi"] == 1
     assert stats["unspecified_type"] == stats["defect"] - 1
+
+
+# --- 그룹 인지 분할 (H2) ----------------------------------------------------
+
+def _frames(video_count=3, per_video=8):
+    """영상 여러 개에서 뽑은 프레임을 흉내 낸다."""
+    rows = []
+    for v in range(video_count):
+        for f in range(per_video):
+            rows.append({
+                "image_id": f"v{v}f{f}", "category": "cctv",
+                "label": config.LABEL_NORMAL if f % 2 else config.LABEL_DEFECT,
+                "group": f"video{v}", "ingested_at": f"2026-01-0{v+1}T00:00:{f:02d}",
+            })
+    return pd.DataFrame(rows)
+
+
+def test_frames_from_one_video_never_straddle_splits():
+    """이 테스트가 그룹 분할의 존재 이유다.
+
+    같은 영상의 프레임은 서로 너무 비슷해서, 학습과 평가에 나뉘어 들어가면 성능이
+    실제보다 높게 나온다. AUROC 0.99인데 현장에서 무너지는 모델이 그렇게 나온다.
+    """
+    frame = _frames()
+    mapping = labeling.assign_splits(frame, mode=labeling.SPLIT_BY_GROUP, seed=3)
+    frame = frame.assign(split=frame["image_id"].map(mapping))
+    per_group = frame.groupby(["group", "label"])["split"].nunique()
+    assert (per_group == 1).all(), frame[["group", "label", "split"]].to_string()
+
+
+def test_random_mode_does_straddle_splits():
+    """무작위가 왜 위험한지 확인해 둔다 — 고르는 사람이 알고 골라야 한다."""
+    frame = _frames()
+    mapping = labeling.assign_splits(frame, mode=labeling.SPLIT_BY_RANDOM, seed=3)
+    frame = frame.assign(split=frame["image_id"].map(mapping))
+    per_group = frame.groupby("group")["split"].nunique()
+    assert (per_group > 1).any()
+
+
+def test_time_mode_puts_early_frames_in_train():
+    """영상이 하나뿐이라 그룹으로 못 나눌 때 쓴다. 앞은 학습, 뒤는 평가."""
+    frame = _frames(video_count=1, per_video=20)
+    mapping = labeling.assign_splits(frame, mode=labeling.SPLIT_BY_TIME, seed=1)
+    ordered = [mapping[i] for i in frame.sort_values("ingested_at")["image_id"]]
+    assert ordered[0] == config.SPLIT_TRAIN
+    assert ordered[-1] != config.SPLIT_TRAIN
+
+
+def test_groups_are_split_by_image_count_not_group_count():
+    """영상마다 프레임 수가 크게 다르다. 개수로 나누면 이미지가 9:1:1이 되기도 한다."""
+    rows = []
+    for name, count in (("big", 40), ("small1", 2), ("small2", 2), ("small3", 2)):
+        for f in range(count):
+            rows.append({
+                "image_id": f"{name}-{f}", "category": "c", "label": config.LABEL_NORMAL,
+                "group": name,
+            })
+    frame = pd.DataFrame(rows)
+    mapping = labeling.assign_splits(frame, mode=labeling.SPLIT_BY_GROUP, seed=5)
+    counts = pd.Series(mapping).value_counts()
+    assert counts.get(config.SPLIT_TRAIN, 0) >= counts.get(config.SPLIT_TEST, 0)
+
+
+def test_missing_group_column_behaves_like_before():
+    """예전 데이터는 group 열이 없다. 이미지 하나가 곧 그룹이라 동작이 그대로여야 한다."""
+    frame = _frames().drop(columns=["group"])
+    mapping = labeling.assign_splits(frame, mode=labeling.SPLIT_BY_GROUP, seed=2)
+    assert len(set(mapping.values())) > 1
+
+
+def test_blank_group_falls_back_to_the_image_itself():
+    frame = _frames()
+    frame.loc[frame.index[:4], "group"] = ""
+    groups = labeling.image_groups(frame)
+    assert list(groups[:4]) == list(frame["image_id"][:4])
+
+
+def test_every_split_gets_something_when_there_are_enough_groups():
+    """평가 분할이 비면 3단계 학습 자체가 막힌다."""
+    mapping = labeling.assign_splits(_frames(video_count=6), mode=labeling.SPLIT_BY_GROUP, seed=1)
+    assert set(mapping.values()) == {config.SPLIT_TRAIN, config.SPLIT_VAL, config.SPLIT_TEST}
+
+
+def test_a_single_group_stays_in_train():
+    frame = _frames(video_count=1, per_video=4)
+    mapping = labeling.assign_splits(frame, mode=labeling.SPLIT_BY_GROUP, seed=1)
+    assert set(mapping.values()) == {config.SPLIT_TRAIN}
+
+
+def test_unknown_split_mode_is_refused():
+    with pytest.raises(ValueError):
+        labeling.assign_splits(_frames(), mode="없는방식")

@@ -10,19 +10,6 @@ import pytest
 from vision_ai import config, datasets, ingest, quality, storage
 
 
-@pytest.fixture
-def sandbox(tmp_path, monkeypatch):
-    """config의 경로를 임시 디렉터리로 바꿔 실제 data/를 건드리지 않게 한다."""
-    data_root = tmp_path / "data"
-    raw_dir = data_root / "raw"
-    monkeypatch.setattr(config, "DATA_ROOT", data_root)
-    monkeypatch.setattr(config, "RAW_DIR", raw_dir)
-    monkeypatch.setattr(config, "INTERIM_DIR", data_root / "interim")
-    monkeypatch.setattr(config, "MANIFEST_PATH", data_root / "manifest.csv")
-    monkeypatch.setattr(config, "LABELS_PATH", data_root / "labels.csv")
-    monkeypatch.setattr(config, "ALL_DIRS", (data_root, raw_dir))
-    config.ensure_dirs()
-    return data_root
 
 
 # --- 경로 파서 -------------------------------------------------------------

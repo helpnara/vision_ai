@@ -44,9 +44,9 @@ def empty_manifest() -> pd.DataFrame:
 
 def load_manifest() -> pd.DataFrame:
     """manifest를 읽는다. 파일이 없으면 빈 DataFrame을 반환한다."""
-    if not config.MANIFEST_PATH.exists():
+    if not config.manifest_path().exists():
         return empty_manifest()
-    df = pd.read_csv(config.MANIFEST_PATH, dtype={"image_id": "str", "sha1": "str"})
+    df = pd.read_csv(config.manifest_path(), dtype={"image_id": "str", "sha1": "str"})
     # 컬럼 스키마가 바뀐 경우에도 깨지지 않도록 보정
     for col in MANIFEST_COLUMNS:
         if col not in df.columns:
@@ -59,7 +59,7 @@ def load_manifest() -> pd.DataFrame:
 def save_manifest(df: pd.DataFrame) -> None:
     """manifest를 저장한다."""
     config.ensure_dirs()
-    df.to_csv(config.MANIFEST_PATH, index=False)
+    df.to_csv(config.manifest_path(), index=False)
 
 
 def append_records(records: Iterable[dict]) -> tuple[int, int]:
@@ -122,14 +122,14 @@ def image_id_from_sha1(sha1: str) -> str:
 def resolve_path(path_value: str) -> Path:
     """manifest의 path 값을 실제 파일 경로로 해석한다."""
     path = Path(str(path_value))
-    return path if path.is_absolute() else config.DATA_ROOT / path
+    return path if path.is_absolute() else config.data_root() / path
 
 
 def to_manifest_path(path: Path) -> str:
     """실제 경로를 manifest에 저장할 문자열로 변환한다 (가능하면 상대경로)."""
     path = path.resolve()
     try:
-        return str(path.relative_to(config.DATA_ROOT))
+        return str(path.relative_to(config.data_root()))
     except ValueError:
         return str(path)
 

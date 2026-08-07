@@ -18,7 +18,7 @@ _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from vision_ai import config, ui  # noqa: E402
+from vision_ai import projects, ui  # noqa: E402
 
 st.set_page_config(
     page_title="표면 결함 탐지 파이프라인",
@@ -29,7 +29,8 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
-config.ensure_dirs()
+# 저장된 활성 프로젝트를 실제 경로에 적용한다. 이후 모든 화면이 이 프로젝트를 본다.
+projects.bootstrap()
 
 PAGES = [
     st.Page("app_pages/home.py", title="홈 / 진행 현황", icon="🏠", default=True),
@@ -49,4 +50,5 @@ CAPTIONS = (
 page = st.navigation(PAGES, position="hidden")
 ui.apply_chrome()
 ui.sidebar_nav(PAGES, captions=CAPTIONS)
+ui.project_picker()
 page.run()

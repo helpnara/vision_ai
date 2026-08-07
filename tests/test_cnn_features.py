@@ -12,14 +12,6 @@ import pytest
 from vision_ai import cnn_features, config, models
 
 
-@pytest.fixture
-def sandbox(tmp_path, monkeypatch):
-    artifacts = tmp_path / "artifacts"
-    monkeypatch.setattr(config, "ARTIFACT_ROOT", artifacts)
-    monkeypatch.setattr(config, "MODEL_DIR", artifacts / "models")
-    monkeypatch.setattr(config, "ALL_DIRS", (artifacts, artifacts / "models"))
-    config.ensure_dirs()
-    return tmp_path
 
 
 needs_model = pytest.mark.skipif(

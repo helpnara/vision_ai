@@ -92,7 +92,7 @@ HELP: dict[str, str] = {
 
 
 def _path() -> Path:
-    return config.DATA_ROOT / SETTINGS_FILE
+    return config.data_root() / SETTINGS_FILE
 
 
 def clamp(name: str, value):

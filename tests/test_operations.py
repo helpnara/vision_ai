@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,24 +20,6 @@ from vision_ai import (
 )
 
 
-@pytest.fixture
-def sandbox(tmp_path, monkeypatch):
-    data_root = tmp_path / "data"
-    artifacts = tmp_path / "artifacts"
-    monkeypatch.setattr(config, "DATA_ROOT", data_root)
-    monkeypatch.setattr(config, "RAW_DIR", data_root / "raw")
-    monkeypatch.setattr(config, "INTERIM_DIR", data_root / "interim")
-    monkeypatch.setattr(config, "MANIFEST_PATH", data_root / "manifest.csv")
-    monkeypatch.setattr(config, "LABELS_PATH", data_root / "labels.csv")
-    monkeypatch.setattr(config, "ARTIFACT_ROOT", artifacts)
-    monkeypatch.setattr(config, "MODEL_DIR", artifacts / "models")
-    monkeypatch.setattr(config, "REPORT_DIR", artifacts / "reports")
-    monkeypatch.setattr(
-        config, "ALL_DIRS",
-        (data_root, data_root / "raw", artifacts, artifacts / "models", artifacts / "reports"),
-    )
-    config.ensure_dirs()
-    return tmp_path
 
 
 def _metrics(recall: float = 0.9) -> dict:
@@ -54,7 +38,7 @@ def _make_run(kind: str = "baseline", recall: float = 0.9, with_model: bool = Tr
                        rng.normal(3, 1, (20, len(features.FEATURE_NAMES)))])
         y = np.array([0] * 20 + [1] * 20)
         model = models.BaselineModel(models.BaselineConfig(kind="logreg")).fit(X, y)
-        artifact = config.MODEL_DIR / "baseline_logreg.joblib"
+        artifact = config.model_dir() / "baseline_logreg.joblib"
         model.save(artifact)
 
     run_id = experiments.record_run(
@@ -73,21 +57,22 @@ def test_register_creates_version_and_copies_model(sandbox):
 
     assert result.version == "v001"
     assert result.artifact is not None
-    from pathlib import Path
-    assert Path(result.artifact).exists()
+    stored = registry.artifact_path(result.artifact)
+    assert stored is not None and stored.exists()
     # 3단계 산출물이 아니라 버전 폴더에 복사되어야 롤백이 가능하다
     assert "registry" in result.artifact and result.artifact != artifact
+    # 폴더를 옮겨도 살아남도록 상대경로로 남아야 한다
+    assert not Path(result.artifact).is_absolute()
 
 
 def test_registered_model_survives_stage3_overwrite(sandbox):
     """3단계가 같은 경로에 덮어써도 등록된 버전은 살아남아야 한다."""
-    from pathlib import Path
-
     run_id, artifact = _make_run()
     result = registry.register(run_id, artifact=artifact)
     Path(artifact).write_bytes(b"overwritten-by-next-training")
 
-    assert Path(result.artifact).read_bytes() != b"overwritten-by-next-training"
+    stored = registry.artifact_path(result.artifact)
+    assert stored.read_bytes() != b"overwritten-by-next-training"
     loaded = serving.load_version(result.version)
     assert loaded.kind == "baseline"
 

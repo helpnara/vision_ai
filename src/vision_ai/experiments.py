@@ -31,11 +31,11 @@ _METRIC_KEYS = (
 
 
 def _runs_path() -> Path:
-    return config.ARTIFACT_ROOT / RUNS_CSV
+    return config.artifact_root() / RUNS_CSV
 
 
 def _run_dir() -> Path:
-    return config.ARTIFACT_ROOT / RUN_DIR
+    return config.artifact_root() / RUN_DIR
 
 
 def new_run_id() -> str:

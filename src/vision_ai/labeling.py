@@ -24,15 +24,15 @@ from . import config, storage
 
 
 def _labels_path() -> Path:
-    return config.LABELS_PATH
+    return config.labels_path()
 
 
 def _splits_path() -> Path:
-    return config.DATA_ROOT / "splits.csv"
+    return config.data_root() / "splits.csv"
 
 
 def _type_map_path() -> Path:
-    return config.DATA_ROOT / "defect_type_map.csv"
+    return config.data_root() / "defect_type_map.csv"
 
 
 # --- 라벨 이벤트 이력 -------------------------------------------------------

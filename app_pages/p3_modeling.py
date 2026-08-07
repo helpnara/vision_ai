@@ -334,7 +334,7 @@ def _baseline_tab(df: pd.DataFrame) -> None:
     )
 
     importance = model.feature_importance()
-    artifact_path = config.MODEL_DIR / f"baseline_{kind}.joblib"
+    artifact_path = config.model_dir() / f"baseline_{kind}.joblib"
     try:
         model.save(artifact_path)
     except Exception as exc:  # 저장 실패가 평가를 막지는 않게 한다
@@ -523,7 +523,7 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
         settings=settings, n_train=model.n_train,
     )
 
-    artifact_path = config.MODEL_DIR / "anomaly_patch.npz"
+    artifact_path = config.model_dir() / "anomaly_patch.npz"
     try:
         model.save(artifact_path)
     except Exception as exc:

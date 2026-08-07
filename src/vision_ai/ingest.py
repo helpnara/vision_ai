@@ -164,7 +164,7 @@ def ingest_uploads(
     source: str = "upload",
 ) -> IngestResult:
     """업로드된 이미지를 data/raw/<source>/<category>/ 에 저장하고 등록한다."""
-    target_dir = config.RAW_DIR / source / (category or "uncategorized")
+    target_dir = config.raw_dir() / source / (category or "uncategorized")
     target_dir.mkdir(parents=True, exist_ok=True)
 
     result = IngestResult()
@@ -409,7 +409,7 @@ def generate_synthetic(
         raise ValueError(f"지원하지 않는 layout: {layout} (visa 또는 mvtec)")
 
     categories = tuple(categories or SURFACE_STYLES.keys())
-    out_dir = Path(out_dir) if out_dir else config.RAW_DIR / SYNTHETIC_SOURCE
+    out_dir = Path(out_dir) if out_dir else config.raw_dir() / SYNTHETIC_SOURCE
     if overwrite and out_dir.exists():
         shutil.rmtree(out_dir)
 

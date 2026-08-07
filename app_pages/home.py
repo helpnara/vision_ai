@@ -106,7 +106,7 @@ def _render_quickstart(manifest: pd.DataFrame) -> None:
 def _render_deployment_note() -> None:
     """배포본에서 데이터가 사라진다는 점을 앱 안에서도 알린다 (README에만 있으면 못 본다)."""
     st.caption(
-        f"데이터 저장 위치: `{config.DATA_ROOT}` — git 추적 대상이 아닙니다. "
+        f"데이터 저장 위치: `{config.data_root()}` — git 추적 대상이 아닙니다. "
         "**무료 배포 환경에서는 컨테이너가 재시작되면 수집 이미지·라벨·모델·판정 이력이 "
         "모두 사라집니다.** 실제 라벨링과 학습은 내려받아 로컬에서 실행하세요."
     )
@@ -277,7 +277,7 @@ def render() -> None:
             "- **사내(회사) 결함 데이터는 사용하지 않는다.** 공개 데이터셋과 직접 촬영 이미지만 사용한다.\n"
             "- 오픈 데이터셋은 라이선스가 각기 다르다. 비상업 조건(CC BY-NC-SA 등)이 붙은 것이 많으므로 "
             "사용 전 원본 배포 페이지에서 조건을 직접 확인한다.\n"
-            f"- 데이터 루트: `{config.DATA_ROOT}` (git 추적 대상 아님)"
+            f"- 데이터 루트: `{config.data_root()}` (git 추적 대상 아님)"
         )
 
     with st.expander("용어 사전 — 화면에 나오는 말이 낯설다면", expanded=False):

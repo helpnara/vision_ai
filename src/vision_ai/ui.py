@@ -282,6 +282,63 @@ def _duration(seconds: float) -> str:
     return f"{minutes}분 {rest}초" if rest else f"{minutes}분"
 
 
+# --- 프로젝트 전환 (H0) -----------------------------------------------------
+
+PROJECT_PICKER_KEY = "nav_project"
+PROJECT_SEEN_KEY = "nav_project_seen"
+"""고른 값 위젯과 파일에 저장된 활성 프로젝트가 **서로 다른 진실**이 되지 않게 하는 열쇠.
+
+프로젝트는 두 곳에서 바뀐다 — 이 선택 상자와 설정 화면(만들기·목록에서 빼기)이다.
+설정 화면에서 바꾸면 파일은 새 프로젝트를 가리키는데 선택 상자의 세션 값은 옛 프로젝트로
+남아 있고, 그러면 "선택이 바뀌었다"고 오해해 **방금 만든 프로젝트에서 도로 튕겨 나온다.**
+실제로 그 증상을 보고 이 키를 넣었다. 마지막으로 본 값을 기억해 두면 어느 쪽이 바뀐
+것인지 구분할 수 있다.
+"""
+
+
+def project_picker() -> None:
+    """사이드바 아래쪽에 지금 보고 있는 프로젝트를 띄우고 바꿀 수 있게 한다.
+
+    **어느 프로젝트를 보고 있는지 항상 보여야 한다.** 프로젝트를 나눈 이유가 데이터를
+    섞지 않는 것인데, 지금 어디에 라벨을 쌓고 있는지 모르면 나눈 의미가 없다. 그래서
+    레일 모드에서도 머리글자를 남긴다.
+    """
+    from vision_ai import projects
+
+    registry = projects.load()
+    slugs = [p.slug for p in registry.projects]
+    names = {p.slug: p.name for p in registry.projects}
+    current = registry.active if registry.active in slugs else slugs[0]
+
+    with st.sidebar:
+        if rail_enabled():
+            st.divider()
+            st.markdown(
+                f"<div title='프로젝트: {names[current]}' style='text-align:center;"
+                f"font-size:0.75rem;opacity:0.7'>{names[current][:2]}</div>",
+                unsafe_allow_html=True,
+            )
+            return
+
+        # 밖에서 활성 프로젝트가 바뀌었으면(설정 화면에서 만들기 등) 선택 상자를 맞춰 준다.
+        if st.session_state.get(PROJECT_SEEN_KEY) != current:
+            st.session_state[PROJECT_SEEN_KEY] = current
+            st.session_state[PROJECT_PICKER_KEY] = current
+
+        st.divider()
+        picked = st.selectbox(
+            "프로젝트",
+            slugs,
+            format_func=lambda slug: names.get(slug, slug),
+            key=PROJECT_PICKER_KEY,
+            help="현장·라인마다 데이터와 라벨을 섞지 않으려면 프로젝트를 나눕니다.",
+        )
+        if picked != current:
+            projects.use(picked)
+            st.session_state[PROJECT_SEEN_KEY] = picked
+            st.rerun()
+
+
 # --- 이미지 위에서 영역 지정 (G15) ------------------------------------------
 
 ROI_DISPLAY_WIDTH = 640

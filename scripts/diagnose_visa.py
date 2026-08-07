@@ -58,7 +58,7 @@ def score_split(root: Path, rows: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="VisA 카테고리별 원인 진단")
-    parser.add_argument("--root", default="data/visa")
+    parser.add_argument("--root", default="data/projects/default/visa")
     parser.add_argument("--categories", nargs="+", default=["pcb1", "pcb2", "pcb3", "pcb4"])
     args = parser.parse_args()
 

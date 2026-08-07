@@ -68,7 +68,8 @@ ProgressCallback = Callable[[int, int], None]
 
 
 def model_path() -> Path:
-    return config.MODEL_DIR / "onnx" / MODEL_NAME
+    # 프로젝트와 무관하게 같은 파일이다. 프로젝트마다 45MB를 다시 받을 이유가 없다.
+    return config.shared_model_dir() / "onnx" / MODEL_NAME
 
 
 def available() -> bool:

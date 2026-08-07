@@ -13,13 +13,6 @@ import pytest
 from vision_ai import config, glossary, settings
 
 
-@pytest.fixture
-def sandbox(tmp_path, monkeypatch):
-    data_root = tmp_path / "data"
-    monkeypatch.setattr(config, "DATA_ROOT", data_root)
-    monkeypatch.setattr(config, "ALL_DIRS", (data_root,))
-    config.ensure_dirs()
-    return data_root
 
 
 # --- 저장과 불러오기 --------------------------------------------------------

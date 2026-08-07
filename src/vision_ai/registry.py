@@ -44,11 +44,23 @@ _METRIC_KEYS = ("threshold", "recall", "precision", "f1", "auroc")
 
 
 def _registry_path() -> Path:
-    return config.ARTIFACT_ROOT / REGISTRY_CSV
+    return config.artifact_root() / REGISTRY_CSV
+
+
+def artifact_path(value) -> Path | None:
+    """레지스트리에 적힌 모델 경로를 실제 경로로 해석한다.
+
+    지금은 `artifact_root()` 기준 상대경로로 저장하지만, 프로젝트 개념이 생기기 전에
+    등록된 행에는 절대경로가 들어 있다. 둘 다 받아들인다.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else config.artifact_root() / path
 
 
 def _version_dir(version: str) -> Path:
-    return config.ARTIFACT_ROOT / REGISTRY_DIR / version
+    return config.artifact_root() / REGISTRY_DIR / version
 
 
 def empty_registry() -> pd.DataFrame:
@@ -207,7 +219,9 @@ def register(
     if source is not None and source.exists():
         destination = directory / f"model{source.suffix}"
         shutil.copy2(source, destination)
-        stored_artifact = str(destination)
+        # artifact_root 기준 **상대경로**로 남긴다. 절대경로로 적으면 프로젝트 폴더를
+        # 옮기거나 다른 기기에서 열었을 때 등록된 모델을 못 찾는다.
+        stored_artifact = str(destination.relative_to(config.artifact_root()))
     else:
         warnings.append(
             "모델 파일을 찾을 수 없어 지표만 등록했습니다. 이 버전으로는 추론할 수 없습니다."

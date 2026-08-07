@@ -52,8 +52,8 @@ def load_version(version: str) -> LoadedModel:
     if row is None:
         raise ValueError(f"등록되지 않은 버전입니다: {version}")
 
-    artifact = row.get("artifact")
-    if not isinstance(artifact, str) or not artifact or not Path(artifact).exists():
+    artifact = registry.artifact_path(row.get("artifact"))
+    if artifact is None or not artifact.exists():
         raise FileNotFoundError(
             f"{version}의 모델 파일이 없습니다. 지표만 등록된 버전은 추론에 쓸 수 없습니다."
         )
@@ -161,7 +161,7 @@ def selectable_versions(registry_frame: pd.DataFrame | None = None) -> Sequence[
         return []
     usable = []
     for _, row in frame.iterrows():
-        artifact = row.get("artifact")
-        if isinstance(artifact, str) and artifact and Path(artifact).exists():
+        artifact = registry.artifact_path(row.get("artifact"))
+        if artifact is not None and artifact.exists():
             usable.append(str(row["version"]))
     return usable

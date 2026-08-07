@@ -11,24 +11,6 @@ import pytest
 from vision_ai import config, guide, labeling, quickstart, registry, storage
 
 
-@pytest.fixture
-def sandbox(tmp_path, monkeypatch):
-    data_root = tmp_path / "data"
-    artifacts = tmp_path / "artifacts"
-    monkeypatch.setattr(config, "DATA_ROOT", data_root)
-    monkeypatch.setattr(config, "RAW_DIR", data_root / "raw")
-    monkeypatch.setattr(config, "INTERIM_DIR", data_root / "interim")
-    monkeypatch.setattr(config, "MANIFEST_PATH", data_root / "manifest.csv")
-    monkeypatch.setattr(config, "LABELS_PATH", data_root / "labels.csv")
-    monkeypatch.setattr(config, "ARTIFACT_ROOT", artifacts)
-    monkeypatch.setattr(config, "MODEL_DIR", artifacts / "models")
-    monkeypatch.setattr(config, "REPORT_DIR", artifacts / "reports")
-    monkeypatch.setattr(
-        config, "ALL_DIRS",
-        (data_root, data_root / "raw", artifacts, artifacts / "models", artifacts / "reports"),
-    )
-    config.ensure_dirs()
-    return tmp_path
 
 
 @pytest.fixture

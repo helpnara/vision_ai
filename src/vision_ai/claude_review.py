@@ -300,7 +300,7 @@ REVIEW_COLUMNS: tuple[str, ...] = (
 
 
 def _cache_path() -> Path:
-    return config.ARTIFACT_ROOT / CACHE_PATH
+    return config.artifact_root() / CACHE_PATH
 
 
 def load_reviews() -> pd.DataFrame:

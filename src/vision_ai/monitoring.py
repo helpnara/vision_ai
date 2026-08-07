@@ -45,7 +45,7 @@ DRIFT_LEVELS = ("안정", "주의", "변화", LEVEL_INSUFFICIENT)
 
 
 def _log_path() -> Path:
-    return config.ARTIFACT_ROOT / INFERENCE_CSV
+    return config.artifact_root() / INFERENCE_CSV
 
 
 # --- 추론 로그 --------------------------------------------------------------

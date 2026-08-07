@@ -115,7 +115,7 @@ def run(
         return result
 
     model = models.PatchAnomalyModel(models.AnomalyConfig(per_position=True)).fit(images)
-    artifact = config.MODEL_DIR / "anomaly_patch.npz"
+    artifact = config.model_dir() / "anomaly_patch.npz"
     model.save(artifact)
 
     # 평가 분할로 임계값을 정한다. 학습 데이터로 정하면 실제보다 관대해진다.

@@ -17,7 +17,7 @@
 2. **특징 정의가 바뀌었을 때** — 특징을 추가하면 예전 벡터는 길이부터 다르다.
    특징 이름 목록에서 지문을 만들어 저장하고, 다르면 캐시를 통째로 버린다.
 
-캐시는 ``artifacts/cache/``에 둔다. 지워도 다시 계산될 뿐 잃는 정보가 없다.
+캐시는 프로젝트별 ``artifacts/projects/<slug>/cache/``에 둔다. 지워도 다시 계산될 뿐 잃는 정보가 없다.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ CACHE_NAME = "image_features.npz"
 
 
 def cache_path() -> Path:
-    return config.CACHE_DIR / CACHE_NAME
+    return config.cache_dir() / CACHE_NAME
 
 
 def schema_fingerprint() -> str:

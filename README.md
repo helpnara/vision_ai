@@ -189,12 +189,13 @@ app_pages/                 단계별 화면
   p4_operations.py         4단계: 운영관리 (MLOps)
   p5_settings.py           설정 (판정 기준)
 src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
-  config.py                경로, 라벨/결함 유형 체계
+  config.py                경로(프로젝트별), 라벨/결함 유형 체계
+  projects.py              프로젝트(작업공간) 관리 · 예전 배치 이관
   storage.py               manifest 읽기/쓰기, 중복 제거
   datasets.py              오픈 데이터셋 카탈로그, 폴더 구조 파서
   quality.py               이미지 품질 점검
   ui.py                    화면 밀도 · 사이드바 레일 · 좁은 화면용 표 · 진행 표시 · 영역 드래그
-  feature_cache.py         이미지 특징 캐시 (이미지 단위 · artifacts/cache/)
+  feature_cache.py         이미지 특징 캐시 (이미지 단위 · 프로젝트별)
   guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장)
   glossary.py              지표 설명 · 결과 판정 · 용어 · 표의 열 도움말 · 임의값 출처
   quickstart.py            빠른 시작 (생성→분할→학습→승격 한 번에)
@@ -267,6 +268,20 @@ PYTHONPATH=src python -m pytest tests/ -q
 
 - `requirements.txt` — 의존성. `opencv-python-headless`를 쓰므로 `packages.txt`(apt 패키지)가 필요 없다.
   일반 `opencv-python`으로 바꾸면 `libGL.so.1` 오류로 기동에 실패한다.
+- 데이터와 산출물은 **프로젝트(작업공간)별로 나뉜다.** 현장·라인마다 데이터·라벨·모델·판정
+  기준을 따로 관리한다. 한 manifest에 섞으면 정상 분포가 넓어져 결함을 놓치고, 성능 지표도
+  여러 현장의 평균이 되어 어디가 문제인지 알 수 없게 된다.
+
+  ```
+  data/projects/<slug>/       manifest.csv · labels.csv · splits.csv · settings.json · raw/
+  artifacts/projects/<slug>/  models/ · reports/ · cache/ · registry.csv · runs/
+  artifacts/shared/models/    사전학습 CNN (프로젝트 공통 — 45MB를 다시 받을 이유가 없다)
+  data/projects.json          프로젝트 목록 + 활성 프로젝트
+  ```
+
+  활성 프로젝트는 **파일에 둔다.** 세션에 두면 브라우저 탭마다 다른 프로젝트를 보게 되고
+  `scripts/`의 측정 스크립트가 어느 것을 봐야 할지 알 수 없다. 사이드바에서 전환하고,
+  만들기·이름 바꾸기는 설정 화면에 있다.
 - `.streamlit/config.toml` — 테마·업로드 상한. 서버 주소/포트는 고정하지 않는다(클라우드가 지정).
   글자 크기(`baseFontSize`·`headingFontSizes`·`metricValueFontSize`)도 여기서 줄인다. 기본값은
   발표 슬라이드에 가까워서 작업용으로는 한 화면에 들어오는 정보가 너무 적다. CSS를 주입하지

@@ -6,7 +6,7 @@ from dataclasses import fields
 
 import streamlit as st
 
-from vision_ai import config, evaluate, feature_cache, settings
+from vision_ai import config, evaluate, feature_cache, projects, settings
 
 
 def _slider(name: str, current, *, percent: bool) -> float:
@@ -33,6 +33,9 @@ def render() -> None:
         icon="ℹ️",
     )
 
+    _project_section()
+
+    st.divider()
     current = settings.load()
     diff = settings.changed(current)
     if diff:
@@ -108,10 +111,82 @@ def render() -> None:
         st.success("기본값으로 되돌렸습니다.", icon="✅")
         st.rerun()
 
-    st.caption(f"저장 위치: `{config.DATA_ROOT / settings.SETTINGS_FILE}` (git 추적 대상 아님)")
+    st.caption(f"저장 위치: `{config.data_root() / settings.SETTINGS_FILE}` (git 추적 대상 아님)")
 
     st.divider()
     _cache_section()
+
+
+def _project_section() -> None:
+    """프로젝트(작업공간) 관리.
+
+    **여기 있는 설정값도 프로젝트별이다.** 라인마다 불량률과 미탐 비용이 다르므로 판정
+    기준도 달라야 한다. 그래서 프로젝트를 이 화면 맨 위에 둔다 — 아래 값들이 어느
+    프로젝트의 것인지 먼저 보여야 한다.
+    """
+    st.subheader("프로젝트 (작업공간)")
+    st.caption(
+        "현장·라인마다 데이터·라벨·모델·판정 기준을 따로 관리합니다. 한 manifest에 섞으면 "
+        "정상 분포가 넓어져 결함을 놓치고, 성능 지표도 여러 현장의 평균이 되어 "
+        "어디가 문제인지 알 수 없게 됩니다."
+    )
+
+    registry = projects.load()
+    current = projects.active()
+    summary = projects.summary(current.slug)
+
+    cols = st.columns(3)
+    cols[0].metric("현재 프로젝트", current.name)
+    cols[1].metric("등록된 이미지", f"{summary['images']:,}장")
+    cols[2].metric("전체 프로젝트", f"{len(registry.projects)}개")
+    st.caption(f"데이터 위치: `{config.data_root()}`")
+
+    with st.expander("프로젝트 만들기 · 이름 바꾸기"):
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**새 프로젝트**")
+            name = st.text_input(
+                "이름", key="p5_project_new", placeholder="예: 2공장 도장라인",
+                help="만들면 빈 작업공간으로 전환됩니다. 기존 데이터는 그대로 남습니다.",
+            )
+            # 버튼을 잠그지 않는다 — Streamlit은 입력을 확정(Enter/포커스 이동)해야 값을
+            # 넘겨주므로, 이름을 다 쳐도 버튼이 잠겨 보여 "왜 안 눌리지"가 된다.
+            if st.button("➕ 만들고 전환", key="p5_project_create"):
+                try:
+                    made = projects.create(name)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success(f"'{made.name}' 프로젝트로 전환했습니다.", icon="✅")
+                    st.rerun()
+        with right:
+            st.markdown("**이름 바꾸기**")
+            renamed = st.text_input(
+                "새 이름", value=current.name, key="p5_project_rename",
+                help="폴더 이름은 그대로 둡니다 — 바꾸면 쌓인 데이터를 통째로 옮겨야 합니다.",
+            )
+            if st.button("✏️ 이름 저장", key="p5_project_rename_do"):
+                try:
+                    projects.rename(current.slug, renamed)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("이름을 바꿨습니다.", icon="✅")
+                    st.rerun()
+
+        if len(registry.projects) > 1:
+            st.divider()
+            others = [p.slug for p in registry.projects if p.slug != current.slug]
+            names = {p.slug: p.name for p in registry.projects}
+            target = st.selectbox(
+                "목록에서 뺄 프로젝트", others, format_func=lambda s: names[s],
+                key="p5_project_remove_pick",
+            )
+            st.caption("목록에서만 뺍니다. **파일은 지우지 않으므로** 같은 이름으로 다시 만들면 돌아옵니다.")
+            if st.button("🗂️ 목록에서 빼기", key="p5_project_remove"):
+                projects.remove(target)
+                st.success(f"'{names[target]}'을(를) 목록에서 뺐습니다.", icon="✅")
+                st.rerun()
 
 
 def _cache_section() -> None:

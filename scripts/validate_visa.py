@@ -158,7 +158,7 @@ def run_category(root: Path, split: pd.DataFrame, category: str, args) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="VisA 실데이터 검증")
-    parser.add_argument("--root", default="data/visa", help="VisA 압축 해제 루트")
+    parser.add_argument("--root", default="data/projects/default/visa", help="VisA 압축 해제 루트")
     parser.add_argument("--categories", nargs="+", default=["pcb1", "pcb2", "pcb3", "pcb4"])
     parser.add_argument("--limit-train", type=int, default=0, help="카테고리별 학습 이미지 상한 (0=전량)")
     parser.add_argument("--localization-limit", type=int, default=40)

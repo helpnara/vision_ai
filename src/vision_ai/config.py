@@ -1,6 +1,21 @@
 """프로젝트 전역 설정: 경로, 라벨/결함 분류 체계, 상수.
 
-경로는 환경변수로 재정의할 수 있다.
+## 경로가 함수인 이유
+
+경로는 **활성 프로젝트에 따라 달라지므로 상수가 아니라 함수**다. 현장·라인마다 데이터와
+라벨을 섞지 않으려면 작업공간이 나뉘어야 하고, 그러면 "manifest가 어디 있는가"의 답이
+지금 어느 프로젝트를 보고 있느냐에 달린다.
+
+    data/projects/<slug>/     manifest.csv · labels.csv · splits.csv · raw/ · interim/
+    artifacts/projects/<slug>/ models/ · reports/ · cache/ · registry.csv · runs.csv
+
+사전학습 CNN 모델(45MB)만 예외로 프로젝트 밖(`shared_model_dir()`)에 둔다. 프로젝트마다
+같은 파일을 다시 내려받을 이유가 없다.
+
+활성 프로젝트는 **프로세스 전역**이다. 이 앱에는 로그인 개념이 없고 이미 한 컨테이너의
+CSV를 모두가 공유하므로(README 참고), 여기만 세션별로 나누는 것은 일관되지 않는다.
+
+경로 컨테이너는 환경변수로 재정의할 수 있다.
 - VISION_AI_DATA_ROOT: 데이터 루트 (기본 <repo>/data)
 - VISION_AI_ARTIFACT_ROOT: 모델/리포트 산출물 루트 (기본 <repo>/artifacts)
 """
@@ -18,26 +33,90 @@ def _env_path(key: str, default: Path) -> Path:
     return Path(value).expanduser().resolve() if value else default
 
 
-# --- 경로 -----------------------------------------------------------------
-DATA_ROOT = _env_path("VISION_AI_DATA_ROOT", PROJECT_ROOT / "data")
-RAW_DIR = DATA_ROOT / "raw"          # 수집 원본 이미지
-INTERIM_DIR = DATA_ROOT / "interim"  # 전처리 중간 산출물
-ARTIFACT_ROOT = _env_path("VISION_AI_ARTIFACT_ROOT", PROJECT_ROOT / "artifacts")
-MODEL_DIR = ARTIFACT_ROOT / "models"
-REPORT_DIR = ARTIFACT_ROOT / "reports"
-CACHE_DIR = ARTIFACT_ROOT / "cache"  # 다시 계산하면 되는 것들 (지워도 무방)
+# --- 경로 컨테이너 ---------------------------------------------------------
+DATA_HOME = _env_path("VISION_AI_DATA_ROOT", PROJECT_ROOT / "data")
+ARTIFACT_HOME = _env_path("VISION_AI_ARTIFACT_ROOT", PROJECT_ROOT / "artifacts")
 
-MANIFEST_PATH = DATA_ROOT / "manifest.csv"   # 수집 이미지 인덱스 (1단계)
-LABELS_PATH = DATA_ROOT / "labels.csv"       # 라벨링 결과 (2단계)
+PROJECTS_DIR = "projects"
+DEFAULT_PROJECT = "default"
 
-ALL_DIRS = (
-    DATA_ROOT, RAW_DIR, INTERIM_DIR, ARTIFACT_ROOT, MODEL_DIR, REPORT_DIR, CACHE_DIR
-)
+_active_project = DEFAULT_PROJECT
+
+
+def active_project() -> str:
+    """지금 보고 있는 프로젝트의 slug."""
+    return _active_project
+
+
+def use_project(slug: str) -> None:
+    """활성 프로젝트를 바꾼다. 이후 모든 경로가 이 프로젝트를 가리킨다."""
+    global _active_project
+    _active_project = str(slug)
+
+
+# --- 프로젝트별 경로 -------------------------------------------------------
+
+def data_root() -> Path:
+    return DATA_HOME / PROJECTS_DIR / _active_project
+
+
+def raw_dir() -> Path:
+    """수집 원본 이미지."""
+    return data_root() / "raw"
+
+
+def interim_dir() -> Path:
+    """전처리 중간 산출물."""
+    return data_root() / "interim"
+
+
+def artifact_root() -> Path:
+    return ARTIFACT_HOME / PROJECTS_DIR / _active_project
+
+
+def model_dir() -> Path:
+    return artifact_root() / "models"
+
+
+def report_dir() -> Path:
+    return artifact_root() / "reports"
+
+
+def cache_dir() -> Path:
+    """다시 계산하면 되는 것들 (지워도 무방)."""
+    return artifact_root() / "cache"
+
+
+def manifest_path() -> Path:
+    """수집 이미지 인덱스 (1단계)."""
+    return data_root() / "manifest.csv"
+
+
+def labels_path() -> Path:
+    """라벨링 결과 (2단계)."""
+    return data_root() / "labels.csv"
+
+
+def shared_model_dir() -> Path:
+    """프로젝트 공통 모델 보관소.
+
+    사전학습 CNN(45MB)처럼 **프로젝트와 무관하게 같은 파일**은 여기 둔다. 프로젝트를
+    만들 때마다 다시 내려받게 하면 디스크와 시간을 그냥 버리는 셈이다.
+    """
+    return ARTIFACT_HOME / "shared" / "models"
+
+
+def all_dirs() -> tuple[Path, ...]:
+    return (
+        data_root(), raw_dir(), interim_dir(),
+        artifact_root(), model_dir(), report_dir(), cache_dir(),
+        shared_model_dir(),
+    )
 
 
 def ensure_dirs() -> None:
     """필요한 디렉터리를 생성한다 (idempotent)."""
-    for path in ALL_DIRS:
+    for path in all_dirs():
         path.mkdir(parents=True, exist_ok=True)
 
 

@@ -13,12 +13,6 @@ import pytest
 from vision_ai import config, feature_cache, features, models
 
 
-@pytest.fixture
-def sandbox(tmp_path, monkeypatch):
-    cache_dir = tmp_path / "cache"
-    monkeypatch.setattr(config, "CACHE_DIR", cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
 
 
 @pytest.fixture
@@ -170,7 +164,7 @@ def test_more_files_than_the_directory_holds_is_fine(sandbox, tmp_path):
     """캐시가 없어도 앱은 돌아가야 한다 — 디렉터리가 없을 때 예외가 나면 안 된다."""
     import shutil
 
-    paths, labels, ids = _tiny_dataset(tmp_path)
-    shutil.rmtree(sandbox)
+    paths, labels, ids = _tiny_dataset(tmp_path / "images")
+    shutil.rmtree(config.cache_dir())
     dataset = models.build_dataset(paths, labels, ids)
     assert len(dataset) == len(paths)

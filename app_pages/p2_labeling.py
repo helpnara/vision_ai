@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, guide, labeling, storage, viz
+from vision_ai import config, guide, labeling, storage, ui, viz
 
 # 라벨을 기록하면 큐에서 빠지는 모드 (커서를 그대로 두면 다음 항목이 올라온다)
 _DRAINING_MODES = frozenset({"unlabeled", "unspecified", "unmapped"})
@@ -132,6 +132,10 @@ def _review_tab(resolved: pd.DataFrame) -> None:
     with image_col:
         if rgb is None:
             st.error(f"이미지를 읽을 수 없습니다: {path}")
+        elif st.session_state.get(f"p2_roimode::{row['image_id']}") == MODE_DRAG and (
+            new_label == config.LABEL_DEFECT
+        ):
+            _roi_canvas(row, rgb, roi)
         else:
             preview_roi = roi if new_label == config.LABEL_DEFECT else None
             st.image(
@@ -159,41 +163,73 @@ def _roi_of(row: pd.Series) -> tuple[int, int, int, int] | None:
     return tuple(int(v) for v in values)  # type: ignore[return-value]
 
 
+MODE_MASK = "마스크에서 자동 추출"
+MODE_DRAG = "이미지에서 직접 그리기"
+MODE_NONE = "지정 안 함"
+
+
+def _roi_key(image_id: str) -> str:
+    """드래그 선택을 담는 위젯 key. 이미지가 바뀌면 선택도 새로 시작해야 한다."""
+    return f"p2_roidrag::{image_id}"
+
+
 def _roi_editor(row: pd.Series, rgb, *, enabled: bool) -> tuple[int, int, int, int] | None:
-    """결함 위치(ROI) 지정 UI. 마스크가 있으면 자동 추출을 우선 제안한다."""
+    """결함 위치(ROI)를 정한다. **화면은 그리지 않고 값만 정한다.**
+
+    실제 지정은 이미지 위에서 드래그로 한다(`_roi_canvas`). 그런데 저장 버튼은 오른쪽
+    칸에 있고 이미지는 왼쪽 칸이라, 코드 실행 순서상 저장 버튼이 먼저다. 그래서 여기서는
+    이전 실행이 세션에 남긴 선택을 읽기만 하고, 그리는 일은 이미지 칸에서 한다.
+    """
     if not enabled or rgb is None:
         return None
 
     st.markdown("**결함 위치 (ROI)**")
     auto_roi = labeling.roi_from_image_path(str(row["path"]))
-    if auto_roi:
-        st.caption(f"ground truth 마스크에서 자동 추출: {auto_roi}")
-    else:
-        st.caption("대응하는 마스크가 없어 직접 지정해야 한다. 비워 두면 저장하지 않는다.")
 
-    choice_options = ["지정 안 함", "직접 지정"]
-    default_index = 0
+    options = [MODE_DRAG, MODE_NONE]
     if auto_roi:
-        choice_options.insert(0, "마스크에서 자동 추출")
-        default_index = 0
+        options.insert(0, MODE_MASK)
     choice = st.radio(
-        "ROI 지정 방식", choice_options, index=default_index, horizontal=True,
+        "ROI 지정 방식", options, index=0, horizontal=True,
         key=f"p2_roimode::{row['image_id']}", label_visibility="collapsed",
     )
 
-    if choice == "마스크에서 자동 추출":
+    if choice == MODE_MASK:
+        st.caption(f"ground truth 마스크에서 자동 추출: {auto_roi}")
         return auto_roi
-    if choice == "지정 안 함":
+    if choice == MODE_NONE:
         return None
 
     height, width = rgb.shape[:2]
-    existing = _roi_of(row) or auto_roi or (width // 4, height // 4, width // 2, height // 2)
-    cols = st.columns(2)
-    x = cols[0].slider("x", 0, max(width - 1, 1), min(int(existing[0]), width - 1), key=f"p2_x::{row['image_id']}")
-    y = cols[1].slider("y", 0, max(height - 1, 1), min(int(existing[1]), height - 1), key=f"p2_y::{row['image_id']}")
-    w = cols[0].slider("폭", 1, width - x, min(int(existing[2]), width - x), key=f"p2_w::{row['image_id']}")
-    h = cols[1].slider("높이", 1, height - y, min(int(existing[3]), height - y), key=f"p2_h::{row['image_id']}")
-    return x, y, w, h
+    drawn = ui.roi_box(_roi_key(str(row["image_id"])), width, height)
+    if drawn:
+        x, y, w, h = drawn
+        st.caption(f"지정됨 — x {x} · y {y} · 폭 {w} · 높이 {h}")
+        return drawn
+
+    # 아직 안 그렸으면 기존 값이나 마스크 값을 그대로 쓴다. 결함이라고 판정해 놓고
+    # 영역을 못 그렸다는 이유로 위치 정보를 잃는 것보다 낫다.
+    fallback = _roi_of(row) or auto_roi
+    if fallback:
+        st.caption(f"기존 값 유지: {fallback} — 새로 그리면 바뀝니다.")
+    else:
+        st.caption("왼쪽 이미지 위에서 드래그해 결함 위치를 감싸세요.")
+    return fallback
+
+
+def _roi_canvas(row: pd.Series, rgb, roi) -> None:
+    """이미지 위에서 드래그로 영역을 지정하는 화면. 왼쪽 칸에 그린다."""
+    height, width = rgb.shape[:2]
+    ui.roi_picker(
+        viz.draw_roi(rgb, roi),
+        key=_roi_key(str(row["image_id"])),
+        width=width,
+        height=height,
+    )
+    st.caption(
+        f"{row['category']} · {row['image_id']} · {width}×{height} — "
+        "**드래그해 영역을 지정**하고, 지정한 영역 **안쪽을 끌면 위치를 옮길 수 있습니다.**"
+    )
 
 
 # --- 폴더 라벨 검증 --------------------------------------------------------

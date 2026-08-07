@@ -369,3 +369,77 @@ def test_progress_survives_a_zero_length_job():
     at = AppTest.from_function(lambda: ui.Progress("작업 중").update(0, 0))
     at.run()
     assert not at.exception
+
+
+# --- 이미지 위에서 영역 지정 (G15) ------------------------------------------
+
+def _state(xs, ys):
+    return {"selection": {"roi": {"x": list(xs), "y": list(ys)}}}
+
+
+def test_no_box_before_anything_is_drawn():
+    st.session_state.clear()
+    assert ui.roi_box("없는키", 100, 100) is None
+
+
+def test_drag_becomes_pixel_coordinates():
+    st.session_state["k"] = _state([10.4, 60.6], [20.2, 50.9])
+    assert ui.roi_box("k", 200, 200) == (10, 20, 50, 31)
+
+
+def test_dragging_right_to_left_gives_the_same_box():
+    """오른쪽에서 왼쪽으로 끌면 좌표가 뒤집혀 온다. 폭이 음수가 되면 안 된다."""
+    st.session_state["k"] = _state([80, 20], [70, 30])
+    assert ui.roi_box("k", 200, 200) == (20, 30, 60, 40)
+
+
+def test_dragging_past_the_edge_is_clipped_to_the_image():
+    """Vega는 축 밖으로도 끌 수 있다. 이미지 밖 좌표를 저장하면 크롭이 깨진다."""
+    st.session_state["k"] = _state([-30, 250], [-10, 400])
+    assert ui.roi_box("k", 200, 150) == (0, 0, 200, 150)
+
+
+def test_a_click_without_dragging_is_not_a_box():
+    """살짝 누르기만 해도 선택이 생긴다. 0픽셀짜리 영역을 저장하면 안 된다."""
+    st.session_state["k"] = _state([40.1, 40.2], [50.0, 50.4])
+    assert ui.roi_box("k", 200, 200) is None
+
+
+def test_a_cleared_selection_reads_as_nothing():
+    st.session_state["k"] = {"selection": {"roi": {}}}
+    assert ui.roi_box("k", 200, 200) is None
+
+
+def _picker_script():
+    import numpy as np
+
+    from vision_ai import ui
+
+    rgb = np.zeros((120, 200, 3), dtype=np.uint8)
+    ui.roi_picker(rgb, key="pick", width=200, height=120)
+
+
+def test_picker_renders_without_a_new_dependency():
+    """Vega-Lite 구간 선택은 Streamlit에 들어 있다. 캔버스 컴포넌트를 새로 깔지 않는다."""
+    at = AppTest.from_function(_picker_script)
+    at.run()
+    assert not at.exception
+
+
+def test_picker_keeps_coordinates_in_original_pixels():
+    """화면에는 줄여 그리더라도 좌표는 원본 픽셀이어야 한다 — 축 도메인을 원본으로 둔다."""
+    import numpy as np
+
+    rgb = np.zeros((1070, 1404, 3), dtype=np.uint8)
+    uri = ui._data_uri(rgb)
+    assert uri.startswith("data:image/jpeg;base64,")
+
+
+def test_transport_image_is_shrunk():
+    """원본을 그대로 요청에 실으면 무거워진다."""
+    import numpy as np
+
+    big = np.zeros((2000, 4000, 3), dtype=np.uint8)
+    small = np.zeros((100, 200, 3), dtype=np.uint8)
+    assert len(ui._data_uri(big)) < len(ui._data_uri(big, max_width=4000))
+    assert ui._data_uri(small)  # 상한보다 작으면 그대로

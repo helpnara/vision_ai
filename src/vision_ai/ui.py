@@ -25,6 +25,7 @@ Streamlit이 밖으로 약속한 표식이다. emotion 해시 클래스(``st-emo
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import Mapping, Sequence
 
@@ -279,6 +280,118 @@ def _duration(seconds: float) -> str:
         return f"{seconds}초"
     minutes, rest = divmod(seconds, 60)
     return f"{minutes}분 {rest}초" if rest else f"{minutes}분"
+
+
+# --- 이미지 위에서 영역 지정 (G15) ------------------------------------------
+
+ROI_DISPLAY_WIDTH = 640
+"""영역 지정 화면에서 이미지를 그릴 폭(px). 좌표는 원본 픽셀 기준으로 돌려준다."""
+
+ROI_TRANSPORT_WIDTH = 1024
+"""브라우저로 보낼 때 이미지를 줄이는 상한. 원본을 그대로 보내면 요청이 무거워진다."""
+
+
+def _data_uri(rgb, *, max_width: int = ROI_TRANSPORT_WIDTH) -> str:
+    """RGB 배열을 data URI로 바꾼다.
+
+    Vega-Lite의 image 마크는 URL을 요구하는데, 이 앱은 이미지를 웹으로 서빙하지 않는다.
+    data URI로 그림을 요청에 실어 보내면 파일 서버 없이 해결된다.
+    """
+    import cv2
+    import numpy as np
+
+    array = np.asarray(rgb)
+    if array.shape[1] > max_width:
+        scale = max_width / array.shape[1]
+        array = cv2.resize(
+            array, (max_width, max(1, round(array.shape[0] * scale))), interpolation=cv2.INTER_AREA
+        )
+    ok, buffer = cv2.imencode(".jpg", cv2.cvtColor(array, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
+
+
+def roi_box(key: str, width: int, height: int) -> tuple[int, int, int, int] | None:
+    """드래그로 지정된 영역을 (x, y, w, h) 정수로 읽는다. 없으면 None.
+
+    ``roi_picker``를 그리기 **전에도** 부를 수 있다 — Streamlit이 선택 결과를 위젯 key로
+    세션 상태에 남기기 때문이다. 화면 배치상 이미지(왼쪽)보다 저장 버튼(오른쪽)이 먼저
+    실행되므로 이 성질이 필요하다.
+    """
+    state = st.session_state.get(key) or {}
+    picked = (state.get("selection") or {}).get("roi") or {}
+    xs, ys = picked.get("x"), picked.get("y")
+    if not xs or not ys:
+        return None
+
+    x0, x1 = sorted(float(v) for v in xs[:2])
+    y0, y1 = sorted(float(v) for v in ys[:2])
+    # Vega는 축 밖으로도 끌 수 있다. 이미지 안으로 잘라 넣는다.
+    x0, x1 = max(0.0, x0), min(float(width), x1)
+    y0, y1 = max(0.0, y0), min(float(height), y1)
+    w, h = round(x1 - x0), round(y1 - y0)
+    if w < 1 or h < 1:
+        return None
+    return round(x0), round(y0), w, h
+
+
+def roi_picker(
+    rgb,
+    *,
+    key: str,
+    width: int,
+    height: int,
+    display_width: int = ROI_DISPLAY_WIDTH,
+) -> None:
+    """이미지 위에서 드래그해 결함 영역을 지정하게 한다.
+
+    좌표를 숫자로 입력하는 것보다 빠르고, 무엇보다 **보고 있는 그림 위에서** 지정하게 된다.
+    슬라이더로 x/y/폭/높이를 맞추려면 값을 옮길 때마다 그림을 다시 봐야 한다.
+
+    새 의존성은 쓰지 않는다. Vega-Lite의 구간 선택(interval)이 곧 사각형 드래그이고,
+    Streamlit이 그 결과를 파이썬으로 돌려준다. 선택 영역 **안쪽을 끌면 그대로 옮겨지므로**
+    지정한 뒤 위치를 고치는 것도 된다 (Vega의 기본 동작).
+
+    화면 크기와 무관하게 **좌표는 원본 픽셀 기준**으로 나온다. 축 도메인을 원본 크기로
+    두고 그림만 줄여 그리기 때문이다.
+
+    결과는 ``roi_box(key, width, height)``로 읽는다.
+    """
+    uri = _data_uri(rgb)
+    if not uri:
+        st.error("이미지를 화면용으로 변환하지 못했습니다.")
+        return
+
+    display_height = max(1, round(display_width * height / max(width, 1)))
+    axes = {
+        "x": {"field": "x", "type": "quantitative", "scale": {"domain": [0, width]}, "axis": None},
+        "y": {"field": "y", "type": "quantitative", "scale": {"domain": [height, 0]}, "axis": None},
+    }
+    spec = {
+        "width": display_width,
+        "height": display_height,
+        "layer": [
+            {
+                "data": {"values": [{"x": 0, "y": 0, "url": uri}]},
+                "mark": {
+                    "type": "image", "width": display_width, "height": display_height,
+                    "align": "left", "baseline": "top",
+                },
+                "encoding": {**axes, "url": {"field": "url", "type": "nominal"}},
+            },
+            {
+                # 선택을 붙일 자리만 필요하다. 보이지 않는 점 하나로 충분하다.
+                "data": {"values": [{"x": 0, "y": 0}]},
+                "mark": {"type": "point", "opacity": 0},
+                "encoding": axes,
+                "params": [
+                    {"name": "roi", "select": {"type": "interval", "encodings": ["x", "y"]}}
+                ],
+            },
+        ],
+    }
+    st.vega_lite_chart(spec, on_select="rerun", key=key, use_container_width=False)
 
 
 # --- 표 (G8·G9) -------------------------------------------------------------

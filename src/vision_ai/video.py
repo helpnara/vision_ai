@@ -359,3 +359,27 @@ def make_sample(
     finally:
         writer.release()
     return path
+
+
+# --- 뽑은 프레임 되짚기 ------------------------------------------------------
+
+_FRAME_STEM = re.compile(r"^(\d+)$")
+
+
+def frame_index(path) -> int | None:
+    """프레임 파일 이름에서 원본 영상의 프레임 번호를 되짚는다.
+
+    `extract()`가 `00000123.jpg`처럼 **번호로 저장하기 때문에** 파일 이름만으로 영상 안의
+    위치를 알 수 있다. 이 값이 있어야 2단계에서 타임라인 위에 프레임을 늘어놓고
+    "3분 12초부터 3분 20초까지 불량"처럼 구간으로 라벨할 수 있다.
+    """
+    match = _FRAME_STEM.match(Path(path).stem)
+    return int(match.group(1)) if match else None
+
+
+def frame_seconds(path, fps: float) -> float | None:
+    """프레임 파일의 영상 내 시각(초). fps를 모르면 None."""
+    index = frame_index(path)
+    if index is None or fps <= 0:
+        return None
+    return index / fps

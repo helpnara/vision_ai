@@ -297,6 +297,30 @@ def image_groups(resolved: pd.DataFrame) -> pd.Series:
     return groups.where(groups.str.strip() != "", ids)
 
 
+def video_frames(resolved: pd.DataFrame) -> pd.DataFrame:
+    """영상에서 뽑은 프레임만, **영상 안 위치**(프레임 번호)와 함께 돌려준다.
+
+    구간 라벨링은 "몇 초부터 몇 초까지"로 고르므로 이미지가 영상 어디쯤인지 알아야 한다.
+    낱장으로 찍은 사진은 그런 위치가 없으니 섞이면 타임라인이 거짓말을 하게 된다.
+
+    프레임 번호는 파일 이름(`00000090.jpg`)에서 읽는다. 번호가 아닌 이름은 시각을 알
+    방법이 없으므로 뺀다 — 엉뚱한 위치에 찍히는 것보다 안 보이는 편이 낫다.
+    """
+    from . import video
+
+    if resolved.empty or "group" not in resolved.columns:
+        return resolved.iloc[0:0]
+
+    groups = image_groups(resolved)
+    frames = resolved[groups != resolved["image_id"].astype(str)].copy()
+    if frames.empty:
+        return frames
+
+    frames["group"] = groups[frames.index]
+    frames["frame_index"] = [video.frame_index(path) for path in frames["path"]]
+    return frames.dropna(subset=["frame_index"]).sort_values("frame_index")
+
+
 def assign_splits(
     resolved: pd.DataFrame,
     *,

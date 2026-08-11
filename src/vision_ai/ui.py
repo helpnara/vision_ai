@@ -451,6 +451,94 @@ def roi_picker(
     st.vega_lite_chart(spec, on_select="rerun", key=key, use_container_width=False)
 
 
+# --- 타임라인에서 구간 지정 (H4) --------------------------------------------
+
+TIMELINE_HEIGHT = 170
+"""타임라인 차트의 **전체** 높이(px).
+
+Streamlit은 이 값을 그림틀 전체 크기로 주고 Vega는 거기에 맞춰 줄인다. 즉 축 눈금과
+축 제목이 먼저 자리를 가져가고 **남은 만큼만** 끌 수 있는 영역이 된다. 90px으로 두었더니
+남은 영역이 1픽셀이라 드래그가 아예 시작되지 않았다. 축이 약 55px을 쓰므로 넉넉히 준다.
+"""
+
+TIMELINE_FIELD = "t"
+"""타임라인의 x축 필드 이름. 선택 결과도 **이 이름**으로 돌아온다."""
+
+
+def range_box(key: str, low: float, high: float) -> tuple[float, float] | None:
+    """타임라인에서 끌어 고른 구간 (시작, 끝). 안 골랐으면 None.
+
+    `roi_box`와 같은 방식이다 — 화면을 그리기 전에도 세션 상태에서 읽을 수 있다.
+
+    Vega는 선택 범위를 **필드 이름**으로 담아 돌려준다. `roi_box`가 `"x"`로 읽는 것은
+    그 차트의 필드 이름이 마침 `x`이기 때문이지 축 이름이어서가 아니다.
+    """
+    state = st.session_state.get(key) or {}
+    picked = (state.get("selection") or {}).get("span") or {}
+    xs = picked.get(TIMELINE_FIELD)
+    if not xs or len(xs) < 2:
+        return None
+    start, end = sorted(float(value) for value in xs[:2])
+    start, end = max(low, start), min(high, end)
+    return (start, end) if end > start else None
+
+
+def timeline_picker(
+    seconds: Sequence[float],
+    marks: Sequence[str],
+    *,
+    key: str,
+    duration: float,
+    width: int = 720,
+) -> None:
+    """영상 타임라인 위에서 시간 구간을 끌어 고르게 한다.
+
+    결함 위치를 이미지 위에서 끄는 것(`roi_picker`)과 **같은 도구**다. Vega-Lite 구간
+    선택에서 x축 하나만 쓰면 그대로 시간 구간이 된다. 새로 만들 것이 없고, 사용자가
+    배우는 조작도 하나로 남는다.
+
+    검사원은 프레임을 한 장씩 보지 않는다. 영상을 돌려 보며 "3분 12초부터 3분 20초까지
+    불량"이라고 짚는다. 한 장씩 라벨하면 3,000장을 한 장씩 봐야 해서 영상을 쓰는 이유가
+    사라진다.
+    """
+    values = [
+        {TIMELINE_FIELD: float(second), "mark": str(mark)}
+        for second, mark in zip(seconds, marks)
+    ]
+    axis = {
+        "x": {
+            "field": TIMELINE_FIELD, "type": "quantitative",
+            "scale": {"domain": [0, max(duration, 0.001)]},
+            "axis": {"title": "영상 시각 (초)"},
+        }
+    }
+    spec = {
+        "width": width,
+        "height": TIMELINE_HEIGHT,
+        "data": {"values": values or [{TIMELINE_FIELD: 0.0, "mark": "없음"}]},
+        "layer": [
+            {
+                "mark": {"type": "tick", "thickness": 3, "size": 46},
+                "encoding": {
+                    **axis,
+                    "color": {
+                        "field": "mark", "type": "nominal",
+                        "legend": {"title": "라벨"},
+                    },
+                },
+            },
+            {
+                "mark": {"type": "point", "opacity": 0},
+                "encoding": axis,
+                "params": [
+                    {"name": "span", "select": {"type": "interval", "encodings": ["x"]}}
+                ],
+            },
+        ],
+    }
+    st.vega_lite_chart(spec, on_select="rerun", key=key, use_container_width=False)
+
+
 # --- 표 (G8·G9) -------------------------------------------------------------
 
 def table_columns(

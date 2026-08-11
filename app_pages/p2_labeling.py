@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from vision_ai import boxes as box_store
 from vision_ai import config, guide, labeling, storage, ui, viz
 
 # 라벨을 기록하면 큐에서 빠지는 모드 (커서를 그대로 두면 다음 항목이 올라온다)
@@ -102,7 +103,7 @@ def _review_tab(resolved: pd.DataFrame) -> None:
             key=f"p2_type::{row['image_id']}",
         )
 
-        roi = _roi_editor(row, rgb, enabled=new_label == config.LABEL_DEFECT)
+        drawn = _box_editor(row, rgb, enabled=new_label == config.LABEL_DEFECT, default_type=new_type)
         note = st.text_input("메모 (선택)", key=f"p2_note::{row['image_id']}")
 
         needs_type = new_label == config.LABEL_DEFECT and not new_type
@@ -114,14 +115,17 @@ def _review_tab(resolved: pd.DataFrame) -> None:
             "💾 저장하고 다음", type="primary", width="stretch", disabled=needs_type
         ):
             is_defect = new_label == config.LABEL_DEFECT
+            # 단일 ROI 열은 그대로 유지한다 — 3단계 Claude 크롭과 예전 이력이 이 값을 본다.
+            # 여러 개를 그렸으면 첫 박스를 대표로 남기고, 전부는 박스 표에 저장한다.
             labeling.record_label(
                 str(row["image_id"]),
                 label=new_label,
                 defect_type=new_type if is_defect else config.DEFECT_TYPE_NONE,
-                roi=roi if is_defect else None,
+                roi=(drawn[0].x, drawn[0].y, drawn[0].w, drawn[0].h) if is_defect and drawn else None,
                 verified=True,
                 note=note,
             )
+            box_store.replace(str(row["image_id"]), drawn if is_defect else [])
             if mode not in _DRAINING_MODES:
                 st.session_state[cursor_key] = min(cursor + 1, len(queue) - 1)
             st.rerun()
@@ -135,16 +139,16 @@ def _review_tab(resolved: pd.DataFrame) -> None:
         elif st.session_state.get(f"p2_roimode::{row['image_id']}") == MODE_DRAG and (
             new_label == config.LABEL_DEFECT
         ):
-            _roi_canvas(row, rgb, roi)
+            _roi_canvas(row, rgb, drawn)
         else:
-            preview_roi = roi if new_label == config.LABEL_DEFECT else None
+            preview = drawn if new_label == config.LABEL_DEFECT else []
             st.image(
-                viz.draw_roi(rgb, preview_roi, label=new_type or ""),
+                _with_boxes(rgb, preview),
                 caption=f"{row['category']} · {row['image_id']} · {rgb.shape[1]}×{rgb.shape[0]}",
                 width="stretch",
             )
-            if preview_roi:
-                st.caption(f"표시된 ROI: {preview_roi}")
+            if preview:
+                st.caption(f"박스 {len(preview)}개")
 
     prev, nxt = st.columns(2)
     if prev.button("◀ 이전", width="stretch", key="p2_prev"):
@@ -173,17 +177,49 @@ def _roi_key(image_id: str) -> str:
     return f"p2_roidrag::{image_id}"
 
 
-def _roi_editor(row: pd.Series, rgb, *, enabled: bool) -> tuple[int, int, int, int] | None:
-    """결함 위치(ROI)를 정한다. **화면은 그리지 않고 값만 정한다.**
+def _boxes_key(image_id: str) -> str:
+    """지금 그려 둔 박스 목록을 담는 세션 키."""
+    return f"p2_boxlist::{image_id}"
 
-    실제 지정은 이미지 위에서 드래그로 한다(`_roi_canvas`). 그런데 저장 버튼은 오른쪽
-    칸에 있고 이미지는 왼쪽 칸이라, 코드 실행 순서상 저장 버튼이 먼저다. 그래서 여기서는
-    이전 실행이 세션에 남긴 선택을 읽기만 하고, 그리는 일은 이미지 칸에서 한다.
+
+def _current_boxes(image_id: str) -> list:
+    """이 이미지에 대해 지금 화면이 들고 있는 박스 목록.
+
+    처음 열 때는 **이미 저장된 박스**를 불러온다. 저장된 것을 안 보여주면 다시 열었을 때
+    빈 화면이 나와 "지워졌나?" 하게 된다.
     """
-    if not enabled or rgb is None:
-        return None
+    key = _boxes_key(image_id)
+    if key not in st.session_state:
+        st.session_state[key] = box_store.to_boxes(box_store.for_image(image_id))
+    return st.session_state[key]
 
-    st.markdown("**결함 위치 (ROI)**")
+
+def _retyped(image_id: str, drawn: list, default_type: str | None) -> list:
+    """`boxes.retype_unspecified`의 결과를 세션에도 되돌려 놓는다.
+
+    화면만 바꾸고 세션을 그대로 두면 다음 rerun에서 원래 값으로 되돌아가 저장되는 것은
+    여전히 "유형 미지정"이다.
+    """
+    changed = box_store.retype_unspecified(drawn, default_type)
+    if changed != drawn:
+        st.session_state[_boxes_key(image_id)] = changed
+    return changed
+
+
+def _box_editor(row: pd.Series, rgb, *, enabled: bool, default_type: str | None) -> list:
+    """결함 박스를 **여러 개** 지정한다. 화면은 그리지 않고 목록만 관리한다.
+
+    한 프레임에 결함이 여럿인 경우가 CCTV에서는 흔하다. 예전처럼 박스 하나만 받으면
+    나머지는 라벨을 못 붙인다.
+
+    그리는 일은 이미지 칸(`_roi_canvas`)에서 하고 여기서는 목록을 관리한다 — 저장 버튼이
+    오른쪽 칸에 있어 코드 실행 순서상 먼저이기 때문이다(단일 ROI 때와 같은 이유).
+    """
+    image_id = str(row["image_id"])
+    if not enabled or rgb is None:
+        return []
+
+    st.markdown("**결함 위치 (박스)**")
     auto_roi = labeling.roi_from_image_path(str(row["path"]))
 
     options = [MODE_DRAG, MODE_NONE]
@@ -191,44 +227,86 @@ def _roi_editor(row: pd.Series, rgb, *, enabled: bool) -> tuple[int, int, int, i
         options.insert(0, MODE_MASK)
     choice = st.radio(
         "ROI 지정 방식", options, index=0, horizontal=True,
-        key=f"p2_roimode::{row['image_id']}", label_visibility="collapsed",
+        key=f"p2_roimode::{image_id}", label_visibility="collapsed",
     )
 
+    if choice == MODE_NONE:
+        return []
     if choice == MODE_MASK:
         st.caption(f"ground truth 마스크에서 자동 추출: {auto_roi}")
-        return auto_roi
-    if choice == MODE_NONE:
-        return None
+        return [
+            box_store.Box(
+                image_id=image_id, x=auto_roi[0], y=auto_roi[1], w=auto_roi[2], h=auto_roi[3],
+                label=default_type or config.DEFECT_TYPE_UNSPECIFIED,
+                source=box_store.SOURCE_MASK,
+            )
+        ]
 
+    drawn = _retyped(image_id, _current_boxes(image_id), default_type)
     height, width = rgb.shape[:2]
-    drawn = ui.roi_box(_roi_key(str(row["image_id"])), width, height)
-    if drawn:
-        x, y, w, h = drawn
-        st.caption(f"지정됨 — x {x} · y {y} · 폭 {w} · 높이 {h}")
-        return drawn
+    pending = ui.roi_box(_roi_key(image_id), width, height)
 
-    # 아직 안 그렸으면 기존 값이나 마스크 값을 그대로 쓴다. 결함이라고 판정해 놓고
-    # 영역을 못 그렸다는 이유로 위치 정보를 잃는 것보다 낫다.
-    fallback = _roi_of(row) or auto_roi
-    if fallback:
-        st.caption(f"기존 값 유지: {fallback} — 새로 그리면 바뀝니다.")
+    add, clear = st.columns([2, 1])
+    if add.button(
+        "＋ 박스 추가", key=f"p2_boxadd::{image_id}", width="stretch", disabled=pending is None
+    ):
+        x, y, w, h = pending
+        drawn.append(
+            box_store.Box(
+                image_id=image_id, x=x, y=y, w=w, h=h,
+                label=default_type or config.DEFECT_TYPE_UNSPECIFIED,
+            )
+        )
+        st.rerun()
+    if clear.button("모두 지우기", key=f"p2_boxclear::{image_id}", width="stretch", disabled=not drawn):
+        st.session_state[_boxes_key(image_id)] = []
+        st.rerun()
+
+    if pending is None:
+        st.caption("왼쪽 이미지 위에서 드래그한 뒤 **＋ 박스 추가**를 누르세요.")
     else:
-        st.caption("왼쪽 이미지 위에서 드래그해 결함 위치를 감싸세요.")
-    return fallback
+        x, y, w, h = pending
+        st.caption(f"그린 영역 — x {x} · y {y} · 폭 {w} · 높이 {h}")
+
+    for order, box in enumerate(drawn, start=1):
+        left, right = st.columns([4, 1])
+        left.caption(
+            f"**{order}.** {config.defect_type_label(box.label)} — "
+            f"{box.w}×{box.h} @ ({box.x}, {box.y})"
+        )
+        if right.button("✕", key=f"p2_boxdel::{image_id}::{order}"):
+            drawn.pop(order - 1)
+            st.rerun()
+
+    if not drawn:
+        st.caption("아직 박스가 없습니다. 결함으로 저장하면 위치 없이 기록됩니다.")
+    return drawn
 
 
-def _roi_canvas(row: pd.Series, rgb, roi) -> None:
+def _with_boxes(rgb, drawn):
+    """이미지 위에 박스를 전부 그린다. 번호가 있어야 오른쪽 목록과 대조된다."""
+    out = rgb
+    for order, box in enumerate(drawn, start=1):
+        out = viz.draw_roi(
+            out, (box.x, box.y, box.w, box.h),
+            label=f"{order}. {config.defect_type_label(box.label)}",
+        )
+    return out
+
+
+def _roi_canvas(row: pd.Series, rgb, drawn) -> None:
     """이미지 위에서 드래그로 영역을 지정하는 화면. 왼쪽 칸에 그린다."""
     height, width = rgb.shape[:2]
     ui.roi_picker(
-        viz.draw_roi(rgb, roi),
+        _with_boxes(rgb, drawn),
         key=_roi_key(str(row["image_id"])),
         width=width,
         height=height,
     )
     st.caption(
         f"{row['category']} · {row['image_id']} · {width}×{height} — "
-        "**드래그해 영역을 지정**하고, 지정한 영역 **안쪽을 끌면 위치를 옮길 수 있습니다.**"
+        "**드래그해 영역을 지정**하고, 지정한 영역 **안쪽을 끌면 위치를 옮길 수 있습니다.** "
+        "여러 개면 하나씩 그려 **＋ 박스 추가**를 누르세요."
     )
 
 
@@ -354,6 +432,162 @@ def _mapping_tab(resolved: pd.DataFrame) -> None:
 
 
 # --- 데이터 분할 -----------------------------------------------------------
+
+# --- 영상 구간 라벨링 (H4) --------------------------------------------------
+
+def _segment_tab(resolved: pd.DataFrame) -> None:
+    st.markdown(
+        "검사원은 프레임을 한 장씩 보지 않는다. 영상을 돌려 보며 **\"여기부터 여기까지 불량\"** 이라고 "
+        "짚는다. 타임라인에서 구간을 끌면 그 구간의 프레임에 라벨이 한 번에 붙는다."
+    )
+
+    frames = labeling.video_frames(resolved)
+    if frames.empty:
+        st.info("영상에서 뽑은 프레임이 없습니다. 1단계에서 영상을 먼저 등록하세요.", icon="🎞️")
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
+        return
+
+    names = sorted(frames["group"].astype(str).unique())
+    picked = st.selectbox("영상", names, key="p2_seg_video")
+    subset = frames[frames["group"].astype(str) == picked].reset_index(drop=True)
+
+    fps = st.number_input(
+        "영상 fps", 1.0, 240.0, 30.0, 1.0, key="p2_seg_fps",
+        help="타임라인의 초를 계산할 때만 씁니다. 원본 fps를 모르면 그대로 두어도 구간 지정은 됩니다.",
+    )
+    seconds = (subset["frame_index"].astype(float) / float(fps)).tolist()
+    duration = max(seconds) if seconds else 1.0
+
+    cols = st.columns(3)
+    cols[0].metric("이 영상의 프레임", f"{len(subset):,}장")
+    cols[1].metric("길이", f"{duration:.1f}초")
+    cols[2].metric("라벨된 프레임", f"{int((subset['label'] != config.LABEL_UNLABELED).sum()):,}장")
+
+    marks = [config.LABEL_KO.get(str(v), str(v)) for v in subset["label"]]
+    key = f"p2_segspan::{picked}"
+    ui.timeline_picker(seconds, marks, key=key, duration=duration)
+    st.caption("타임라인 위를 **드래그**해 구간을 고르세요. 고른 구간 안쪽을 끌면 위치가 옮겨집니다.")
+
+    span = ui.range_box(key, 0.0, duration)
+    if span is None:
+        st.info("아직 구간을 고르지 않았습니다.", icon="👆")
+        return
+
+    start, end = span
+    inside = subset[(pd.Series(seconds) >= start) & (pd.Series(seconds) <= end)]
+    st.success(
+        f"**{start:.1f}초 ~ {end:.1f}초** — 프레임 {len(inside):,}장이 들어갑니다.", icon="🎯"
+    )
+    if inside.empty:
+        return
+
+    with st.expander(f"이 구간의 프레임 미리보기 (앞 8장)", expanded=True):
+        for column, (_, row) in zip(st.columns(4), inside.head(4).iterrows()):
+            column.image(str(storage.resolve_path(row["path"])), width="stretch")
+        if len(inside) > 4:
+            for column, (_, row) in zip(st.columns(4), inside.iloc[4:8].iterrows()):
+                column.image(str(storage.resolve_path(row["path"])), width="stretch")
+
+    col1, col2 = st.columns(2)
+    label = col1.radio(
+        "이 구간의 판정", [config.LABEL_DEFECT, config.LABEL_NORMAL],
+        format_func=lambda x: config.LABEL_KO.get(x, x), horizontal=True, key="p2_seg_label",
+    )
+    defect_type = col2.selectbox(
+        "결함 유형", DEFECT_TYPE_CHOICES, index=None, format_func=_defect_label,
+        placeholder="결함 유형을 선택하세요",
+        disabled=label != config.LABEL_DEFECT, key="p2_seg_type",
+    )
+
+    needs_type = label == config.LABEL_DEFECT and not defect_type
+    if needs_type:
+        st.caption("⚠️ 결함으로 판정했으면 유형을 선택해야 저장할 수 있다.")
+
+    if st.button(
+        f"🏷️ {len(inside):,}장에 한 번에 라벨", type="primary",
+        key="p2_seg_apply", disabled=needs_type,
+    ):
+        is_defect = label == config.LABEL_DEFECT
+        count = labeling.record_labels([
+            {
+                "image_id": str(image_id),
+                "label": label,
+                "defect_type": defect_type if is_defect else config.DEFECT_TYPE_NONE,
+                "verified": True,
+                "labeled_by": "구간 라벨링",
+                "note": f"{picked} {start:.1f}~{end:.1f}초",
+            }
+            for image_id in inside["image_id"].astype(str)
+        ])
+        st.success(f"{count:,}장에 라벨을 붙였습니다.", icon="✅")
+        st.caption(
+            "결함 **위치(박스)** 는 구간으로 정할 수 없습니다 — 프레임마다 다르기 때문입니다. "
+            "**라벨 검수** 탭에서 한 장씩 그리세요."
+        )
+        st.rerun()
+
+
+def _box_export(resolved: pd.DataFrame) -> None:
+    """박스를 학습 프레임워크가 읽는 형식으로 내보낸다.
+
+    내부는 고치기 쉬운 CSV로 두고, **내보낼 때** 변환한다. 변환은 언제든 다시 할 수 있지만
+    편집 이력은 한 번 잃으면 끝이다.
+    """
+    st.subheader("결함 박스")
+    frame = box_store.load()
+    info = box_store.summary(frame)
+
+    cols = st.columns(4)
+    cols[0].metric("박스", f"{info['boxes']:,}개")
+    cols[1].metric("박스가 있는 이미지", f"{info['images']:,}장")
+    cols[2].metric("클래스", f"{info['labels']:,}종")
+    cols[3].metric("이미지당 평균", f"{info['per_image']:.1f}개")
+
+    if not info["boxes"]:
+        st.caption(
+            "아직 박스가 없습니다. **라벨 검수** 탭에서 결함으로 판정하고 이미지 위에 그리세요."
+        )
+        adoptable = box_store.from_manifest_roi(resolved)
+        if adoptable:
+            st.caption(f"예전 방식으로 지정한 위치 {len(adoptable):,}건이 있습니다.")
+            if st.button("📥 예전 ROI를 박스로 가져오기", key="p2_box_adopt"):
+                moved = box_store.adopt_manifest_rois(resolved)
+                st.success(f"{moved:,}건을 옮겼습니다.", icon="✅")
+                st.rerun()
+        return
+
+    st.caption("클래스 번호는 이름을 정렬한 순서로 매깁니다: " + ", ".join(
+        f"{index}={name}" for index, name in enumerate(box_store.class_names(frame))
+    ))
+
+    import json
+
+    manifest = storage.load_manifest()
+    left, middle, right = st.columns(3)
+    left.download_button(
+        "⬇️ 박스 CSV", frame.to_csv(index=False).encode("utf-8-sig"),
+        file_name="boxes.csv", mime="text/csv", width="stretch",
+    )
+    middle.download_button(
+        "⬇️ COCO JSON",
+        json.dumps(box_store.to_coco(frame, manifest), ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="annotations_coco.json", mime="application/json", width="stretch",
+        help="COCO는 [x, y, 폭, 높이] 좌상단 기준. category_id는 1부터입니다.",
+    )
+    texts = box_store.to_yolo(frame, manifest)
+    right.download_button(
+        "⬇️ YOLO (zip)",
+        box_store.to_yolo_zip(frame, manifest),
+        file_name="labels_yolo.zip", mime="application/zip", width="stretch",
+        help="이미지 한 장당 txt 한 개 + classes.txt. YOLO는 이미지 크기로 나눈 중심 "
+             "좌표를 쓰므로 크기를 모르는 이미지는 빠집니다.",
+    )
+    if len(texts) < info["images"]:
+        st.caption(
+            f"YOLO 내보내기에서 {info['images'] - len(texts):,}장이 빠졌습니다 — "
+            "manifest에 폭·높이가 없어 정규화할 수 없습니다."
+        )
+
 
 def _split_mode(resolved: pd.DataFrame) -> str:
     """무엇을 하나로 묶어 옮길지 고르게 한다.
@@ -557,7 +791,7 @@ def render() -> None:
     )
     split_mark = "✅" if split_done else "👉"
     tabs = st.tabs(
-        ["🔍 라벨 검수", "✅ 폴더 라벨 검증", "🔀 결함 유형 정규화",
+        ["🔍 라벨 검수", "🎞️ 영상 구간 라벨링", "✅ 폴더 라벨 검증", "🔀 결함 유형 정규화",
          f"{split_mark} ✂️ 데이터 분할", "📊 라벨 현황"]
     )
     if not split_done:
@@ -568,13 +802,17 @@ def render() -> None:
     with tabs[0]:
         _review_tab(resolved)
     with tabs[1]:
-        _verify_tab(resolved)
+        _segment_tab(resolved)
     with tabs[2]:
-        _mapping_tab(resolved)
+        _verify_tab(resolved)
     with tabs[3]:
-        _split_tab(resolved)
+        _mapping_tab(resolved)
     with tabs[4]:
+        _split_tab(resolved)
+    with tabs[5]:
         _status_tab(resolved)
+        st.divider()
+        _box_export(resolved)
 
 
 render()

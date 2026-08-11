@@ -163,6 +163,38 @@ def test_yolo_skips_images_with_unknown_size(sandbox):
     assert texts == {}
 
 
+def test_yolo_zip_holds_one_file_per_image(labelled):
+    """YOLO는 이미지 한 장당 txt 한 개를 요구한다. 한 파일로 이어 붙이면 받는 쪽이
+    직접 쪼개야 하고, 쪼개는 규칙은 어디에도 적혀 있지 않다."""
+    import io
+    import zipfile
+
+    frame, manifest = labelled
+    with zipfile.ZipFile(io.BytesIO(boxes.to_yolo_zip(frame, manifest))) as archive:
+        names = set(archive.namelist())
+        assert names == {"classes.txt", "labels/img1.txt", "labels/img2.txt"}
+        assert len(archive.read("labels/img1.txt").decode().strip().splitlines()) == 2
+
+
+def test_yolo_zip_carries_the_class_names(labelled):
+    """txt 안에는 번호뿐이다. 번호와 이름을 잇는 표가 없으면 나중에 뜻을 알 수 없다."""
+    import io
+    import zipfile
+
+    frame, manifest = labelled
+    with zipfile.ZipFile(io.BytesIO(boxes.to_yolo_zip(frame, manifest))) as archive:
+        listed = archive.read("classes.txt").decode().strip().splitlines()
+    assert listed == boxes.class_names(frame)
+
+
+def test_yolo_zip_is_still_a_valid_zip_when_nothing_is_labelled(sandbox):
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(boxes.to_yolo_zip(boxes.empty(), pd.DataFrame()))) as archive:
+        assert archive.namelist() == ["classes.txt"]
+
+
 def test_class_numbers_are_stable_across_exports(labelled):
     """번호가 실행마다 달라지면 이미 학습한 모델과 어긋난다."""
     frame, manifest = labelled

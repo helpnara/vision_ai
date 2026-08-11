@@ -25,6 +25,7 @@ manifest에는 박스가 `roi_x/roi_y/roi_w/roi_h` 네 칸, 즉 **한 개만** �
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace as replace_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -206,6 +207,25 @@ def adopt_manifest_rois(resolved: pd.DataFrame) -> int:
     return len(rows)
 
 
+def retype_unspecified(drawn: list[Box], defect_type: str | None) -> list[Box]:
+    """아직 유형이 안 붙은 박스에 유형을 붙인다.
+
+    **박스를 먼저 그리고 유형을 나중에 고르는 순서가 자연스럽다.** 그런데 박스는 그리는
+    순간의 유형으로 굳으므로, 그대로 두면 유형을 골라도 박스는 "유형 미지정"으로 저장된다
+    — 화면에는 유형이 보이는데 데이터에는 없는, 알아채기 어려운 어긋남이다.
+
+    이미 유형이 붙은 박스는 건드리지 않는다. 한 장에 유형이 다른 결함이 있을 때 나중에
+    고른 유형으로 앞의 것까지 덮으면 그건 해 둔 작업을 잃는 것이다.
+    """
+    if not defect_type:
+        return drawn
+    return [
+        box if box.label != config.DEFECT_TYPE_UNSPECIFIED
+        else replace_dataclass(box, label=defect_type)
+        for box in drawn
+    ]
+
+
 def summary(frame: pd.DataFrame | None = None) -> dict:
     frame = load() if frame is None else frame
     if frame.empty:
@@ -304,3 +324,42 @@ def to_yolo(frame: pd.DataFrame, images: pd.DataFrame) -> dict[str, str]:
             f"{cx:.6f} {cy:.6f} {float(row['w']) / width:.6f} {float(row['h']) / height:.6f}"
         )
     return {name: "\n".join(lines) + "\n" for name, lines in output.items()}
+
+
+def to_yolo_zip(frame: pd.DataFrame, images: pd.DataFrame) -> bytes:
+    """YOLO 학습 폴더 그대로를 zip 한 개로 묶는다.
+
+    YOLO는 **이미지 한 장당 txt 한 개**를 요구한다. 전부 한 파일에 이어 붙여 내려주면
+    받는 쪽이 다시 쪼개야 하는데, 그 쪼개는 규칙이 어디에도 적혀 있지 않아 결국 사람이
+    손으로 나누게 된다. 학습기가 바로 읽을 수 있는 모양으로 내보낸다.
+
+    `classes.txt`를 함께 넣는다 — txt 안의 클래스는 번호뿐이라, 번호와 이름을 잇는 표가
+    없으면 나중에 이 라벨이 무엇이었는지 알 수 없다.
+    """
+    import io
+    import zipfile
+
+    texts = to_yolo(frame, images)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("classes.txt", "\n".join(class_names(frame)) + "\n")
+        for name, body in sorted(texts.items()):
+            archive.writestr(f"labels/{name}.txt", body)
+    return buffer.getvalue()
+
+
+def draw_all(rgb, frame: pd.DataFrame, *, labels: bool = True):
+    """이미지 위에 박스를 전부 그린다.
+
+    박스가 여러 개라 **어느 것이 어느 클래스인지** 보이지 않으면 라벨링이 성립하지 않는다.
+    번호와 클래스 이름을 함께 붙인다.
+    """
+    from . import viz
+
+    out = rgb
+    for order, (_, row) in enumerate(frame.iterrows(), start=1):
+        text = f"{order}. {config.defect_type_label(str(row['label']))}" if labels else ""
+        out = viz.draw_roi(
+            out, (int(row["x"]), int(row["y"]), int(row["w"]), int(row["h"])), label=text
+        )
+    return out

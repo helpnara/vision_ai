@@ -213,3 +213,29 @@ def test_sample_goes_into_the_project_by_default(sandbox):
 
     made = video_module.make_sample(seconds=1)
     assert config.interim_dir() in made.parents
+
+
+# --- 프레임 되짚기 (H4 구간 라벨링의 토대) -----------------------------------
+
+def test_frame_number_is_recoverable_from_the_file_name():
+    """이 값이 있어야 타임라인 위에 프레임을 늘어놓고 구간으로 라벨할 수 있다."""
+    assert video.frame_index("00000123.jpg") == 123
+    assert video.frame_index("/a/b/00000000.jpg") == 0
+
+
+def test_non_frame_files_report_no_number():
+    assert video.frame_index("photo.png") is None
+    assert video.frame_index("00001-copy.jpg") is None
+
+
+def test_seconds_follow_the_frame_rate():
+    assert video.frame_seconds("00000090.jpg", 30) == pytest.approx(3.0)
+    assert video.frame_seconds("00000090.jpg", 0) is None
+
+
+def test_extracted_frames_map_back_to_their_position(clip, tmp_path):
+    """추출이 번호로 저장하므로 되짚기가 성립한다 — 둘이 어긋나면 구간 라벨이 엉킨다."""
+    result = video.extract(clip, stride=10, out_dir=tmp_path / "out", similarity=None)
+    indexes = [video.frame_index(path) for path in result.saved]
+    assert indexes == sorted(indexes)
+    assert all(index % 10 == 0 for index in indexes)

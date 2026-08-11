@@ -10,6 +10,7 @@ CSS는 ``data-testid``만 써야 한다. Streamlit의 ``st-emotion-cache-...`` �
 
 from __future__ import annotations
 
+import json
 import re
 
 import pandas as pd
@@ -443,3 +444,79 @@ def test_transport_image_is_shrunk():
     small = np.zeros((100, 200, 3), dtype=np.uint8)
     assert len(ui._data_uri(big)) < len(ui._data_uri(big, max_width=4000))
     assert ui._data_uri(small)  # 상한보다 작으면 그대로
+
+
+# --- 타임라인에서 구간 지정 (H4) --------------------------------------------
+
+def _span(xs):
+    # Vega는 선택 범위를 축 이름이 아니라 **필드 이름**으로 담아 돌려준다.
+    return {"selection": {"span": {ui.TIMELINE_FIELD: list(xs)}}}
+
+
+def test_no_span_before_anything_is_dragged():
+    st.session_state.clear()
+    assert ui.range_box("없는키", 0, 10) is None
+
+
+def test_drag_on_the_timeline_becomes_a_time_range():
+    st.session_state["t"] = _span([2.5, 7.5])
+    assert ui.range_box("t", 0, 10) == pytest.approx((2.5, 7.5))
+
+
+def test_dragging_backwards_gives_the_same_range():
+    st.session_state["t"] = _span([8.0, 3.0])
+    assert ui.range_box("t", 0, 10) == pytest.approx((3.0, 8.0))
+
+
+def test_dragging_past_the_ends_is_clipped_to_the_video():
+    """영상 밖 시각으로 라벨하면 아무 프레임도 안 잡히거나 엉뚱한 것이 잡힌다."""
+    st.session_state["t"] = _span([-5.0, 99.0])
+    assert ui.range_box("t", 0, 10) == pytest.approx((0.0, 10.0))
+
+
+def test_a_click_without_dragging_is_not_a_range():
+    st.session_state["t"] = _span([4.0, 4.0])
+    assert ui.range_box("t", 0, 10) is None
+
+
+def _timeline_script():
+    from vision_ai import ui
+
+    ui.timeline_picker([0.0, 1.0, 2.0], ["미라벨", "결함", "정상"], key="tl", duration=3.0)
+
+
+def test_timeline_renders_without_a_new_dependency():
+    """결함 위치를 끄는 것과 같은 도구다 — x축 하나만 쓰면 시간 구간이 된다."""
+    at = AppTest.from_function(_timeline_script)
+    at.run()
+    assert not at.exception
+
+
+def test_timeline_survives_an_empty_video():
+    at = AppTest.from_function(
+        lambda: ui.timeline_picker([], [], key="tl", duration=0.0)
+    )
+    at.run()
+    assert not at.exception
+
+
+def test_the_field_the_chart_draws_is_the_field_the_reader_looks_for():
+    """차트의 필드 이름과 `range_box`가 찾는 열쇠가 어긋나면 **드래그가 조용히 무시된다.**
+
+    실제로 그렇게 어긋나 있었다. 화면은 멀쩡히 그려지고 끌리기도 하는데 결과만 안 잡혀서
+    원인을 찾는 데 오래 걸렸다. 둘을 한 상수로 묶고 여기서 붙잡아 둔다.
+    """
+    at = AppTest.from_function(_timeline_script)
+    at.run()
+    spec = json.loads(at.get("vega_lite_chart")[0].proto.spec)
+    fields = {layer["encoding"]["x"]["field"] for layer in spec["layer"]}
+    assert fields == {ui.TIMELINE_FIELD}
+
+
+def test_the_timeline_leaves_room_to_actually_drag():
+    """Streamlit이 주는 height는 **그림틀 전체**다 — 축이 먼저 가져가고 남은 만큼만 끌린다.
+
+    90px으로 두었더니 끌 수 있는 영역이 1픽셀이 되어 구간 지정이 아예 되지 않았다.
+    축 눈금·제목이 약 55px을 쓴다.
+    """
+    assert ui.TIMELINE_HEIGHT >= 130

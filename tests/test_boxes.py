@@ -12,7 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from vision_ai import boxes, config
+from vision_ai import boxes, config, storage
 
 
 def _box(image_id="img1", x=10, y=20, w=30, h=40, label="scratch", **kwargs):
@@ -210,3 +210,132 @@ def test_exports_are_empty_when_nothing_is_labelled(sandbox):
 
 def test_boxes_live_inside_the_project(sandbox):
     assert boxes.boxes_path().parent == config.data_root()
+
+
+# --- 마스크에서 일괄 생성 (검출 학습용) --------------------------------------
+
+def _mask_dataset(sandbox, blobs, *, label="scratch"):
+    """VisA 배치(Images/Masks)로 이미지 한 장과 마스크를 만든다."""
+    import cv2
+    import numpy as np
+
+    image = sandbox / "raw" / "pcb1" / "Data" / "Images" / "Anomaly" / "000.JPG"
+    mask = sandbox / "raw" / "pcb1" / "Data" / "Masks" / "Anomaly" / "000.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    mask.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(image), np.full((100, 200, 3), 60, np.uint8))
+
+    canvas = np.zeros((100, 200), np.uint8)
+    for x, y, w, h in blobs:
+        canvas[y:y + h, x:x + w] = 255
+    cv2.imwrite(str(mask), canvas)
+
+    resolved = pd.DataFrame([{
+        "image_id": "img1",
+        "path": storage.to_manifest_path(image),
+        "label": config.LABEL_DEFECT,
+        "defect_type": label,
+    }])
+    return resolved
+
+
+def test_separate_defects_become_separate_boxes(sandbox):
+    """실측으로 VisA 결함의 58%가 떨어진 덩어리 2개 이상이다. 한 박스로 묶으면
+    면적이 평균 2.5배가 되고 그 절반이 배경이라 모델이 배경을 결함이라고 배운다."""
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20), (150, 70, 20, 20)])
+    counts = boxes.from_masks(resolved)
+
+    assert counts["images"] == 1 and counts["boxes"] == 2
+    made = boxes.for_image("img1")
+    assert set(zip(made["x"], made["y"])) == {(10, 10), (150, 70)}
+
+
+def test_boxes_are_tight_around_each_blob(sandbox):
+    resolved = _mask_dataset(sandbox, [(10, 20, 30, 40)])
+    boxes.from_masks(resolved)
+    row = boxes.for_image("img1").iloc[0]
+    assert (row["x"], row["y"], row["w"], row["h"]) == (10, 20, 30, 40)
+
+
+def test_specks_are_dropped(sandbox):
+    """VisA 마스크 덩어리 하위 5%는 1~2픽셀 — 결함이 아니라 가장자리 계단 자국이다."""
+    resolved = _mask_dataset(sandbox, [(10, 10, 30, 30), (150, 80, 1, 1)])
+    assert boxes.from_masks(resolved)["boxes"] == 1
+
+
+def test_the_speck_floor_can_be_lowered(sandbox):
+    resolved = _mask_dataset(sandbox, [(10, 10, 30, 30), (150, 80, 1, 1)])
+    assert boxes.from_masks(resolved, min_area=1)["boxes"] == 2
+
+
+def test_human_boxes_are_never_overwritten(sandbox):
+    """자동으로 만든 것이 손으로 고친 것을 덮으면 그 작업을 되돌릴 방법이 없다."""
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20), (150, 70, 20, 20)])
+    boxes.replace("img1", [_box("img1", x=5, y=5, w=9, h=9, label="dent")])
+
+    counts = boxes.from_masks(resolved)
+    assert counts["images"] == 0 and counts["skipped_existing"] == 1
+    kept = boxes.for_image("img1")
+    assert len(kept) == 1 and kept.iloc[0]["label"] == "dent"
+
+
+def test_overwrite_replaces_the_whole_image(sandbox):
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20), (150, 70, 20, 20)])
+    boxes.replace("img1", [_box("img1", x=5, y=5, w=9, h=9, label="dent")])
+
+    boxes.from_masks(resolved, overwrite=True)
+    made = boxes.for_image("img1")
+    assert len(made) == 2 and set(made["label"]) == {"scratch"}
+
+
+def test_generated_boxes_are_marked_as_coming_from_a_mask(sandbox):
+    """사람이 그린 것과 구분이 안 되면 어디까지 검수했는지 알 수 없다."""
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20)])
+    boxes.from_masks(resolved)
+    assert boxes.for_image("img1").iloc[0]["source"] == boxes.SOURCE_MASK
+
+
+def test_the_image_defect_type_becomes_the_box_class(sandbox):
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20)], label="dent")
+    boxes.from_masks(resolved)
+    assert boxes.for_image("img1").iloc[0]["label"] == "dent"
+
+
+def test_images_without_a_mask_are_counted(sandbox):
+    """VisA 결함 461장 중 13장은 마스크가 없었다. 조용히 빠지면 왜 적은지 알 수 없다."""
+    resolved = pd.DataFrame([{
+        "image_id": "img1", "path": "raw/plain/007.jpg",
+        "label": config.LABEL_DEFECT, "defect_type": "scratch",
+    }])
+    counts = boxes.from_masks(resolved)
+    assert counts["skipped_no_mask"] == 1 and counts["boxes"] == 0
+
+
+def test_an_empty_mask_is_counted_separately(sandbox):
+    """마스크가 없는 것과 있는데 다 잡티였던 것은 원인이 다르다."""
+    resolved = _mask_dataset(sandbox, [])
+    counts = boxes.from_masks(resolved)
+    assert counts["skipped_empty"] == 1 and counts["skipped_no_mask"] == 0
+
+
+def test_normal_images_are_left_alone(sandbox):
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20)])
+    resolved["label"] = config.LABEL_NORMAL
+    assert boxes.from_masks(resolved)["boxes"] == 0
+
+
+def test_candidates_are_counted_before_running(sandbox):
+    """수백 장을 훑기 전에 얼마나 채워지는지 알려줘야 누를지 정할 수 있다."""
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20)])
+    assert boxes.mask_candidates(resolved) == {"ready": 1, "without_mask": 0, "already": 0}
+
+    boxes.from_masks(resolved)
+    assert boxes.mask_candidates(resolved)["already"] == 1
+
+
+def test_box_ids_stay_unique_within_an_image(sandbox):
+    """같은 id가 둘이면 내보낼 때 하나가 조용히 사라진다."""
+    resolved = _mask_dataset(sandbox, [(10, 10, 20, 20), (60, 10, 20, 20), (150, 70, 20, 20)])
+    boxes.from_masks(resolved)
+    made = boxes.for_image("img1")
+    assert len(set(made["box_id"])) == len(made) == 3

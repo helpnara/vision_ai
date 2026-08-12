@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import config
+from . import config, storage
 
 BOXES_FILE = "boxes.csv"
 
@@ -224,6 +224,112 @@ def retype_unspecified(drawn: list[Box], defect_type: str | None) -> list[Box]:
         else replace_dataclass(box, label=defect_type)
         for box in drawn
     ]
+
+
+def from_masks(
+    resolved: pd.DataFrame,
+    *,
+    min_area: int | None = None,
+    overwrite: bool = False,
+    progress=None,
+) -> dict:
+    """결함 마스크가 있는 이미지에 **덩어리마다 박스 하나씩** 자동으로 붙인다.
+
+    검출 모델을 학습하려면 박스가 수백 장 필요한데 손으로만 그리면 며칠이 걸린다.
+    VisA·MVTec은 결함 픽셀 마스크를 함께 주므로 그것을 박스로 바꾸면 바로 채워진다.
+
+    **사람이 그린 박스는 절대 건드리지 않는다**(`overwrite=True`가 아닌 한). 자동으로
+    만든 것이 손으로 고친 것을 덮으면 그 작업을 되돌릴 방법이 없다.
+
+    유형은 이미지의 결함 유형을 그대로 쓴다. 유형이 미지정이면 박스도 미지정으로 들어가고,
+    그러면 "결함이 어디에 있는가"만 배우는 1클래스 검출이 된다 — 그것도 쓸모가 있지만
+    유형별로 나누고 싶다면 **결함 유형 정규화**를 먼저 해야 한다.
+    """
+    from . import labeling
+
+    min_area = labeling.MIN_BLOB_AREA if min_area is None else min_area
+    frame = load()
+    taken = set(frame["image_id"].astype(str)) if not frame.empty else set()
+
+    defects = resolved[resolved["label"].astype(str) == config.LABEL_DEFECT]
+    counts = {
+        "images": 0, "boxes": 0,
+        "skipped_existing": 0, "skipped_no_mask": 0, "skipped_empty": 0,
+    }
+    made: list[Box] = []
+    total = len(defects)
+
+    for order, (_, row) in enumerate(defects.iterrows(), start=1):
+        image_id = str(row["image_id"])
+        if progress is not None:
+            progress(order, total)
+        if image_id in taken and not overwrite:
+            counts["skipped_existing"] += 1
+            continue
+
+        found = labeling.boxes_from_image_path(str(row["path"]), min_area=min_area)
+        if not found:
+            # 마스크가 없는 것과, 있는데 다 잡티였던 것을 나눠 센다 — 원인이 다르다.
+            key = ("skipped_no_mask"
+                   if labeling.find_mask_path(storage.resolve_path(str(row["path"]))) is None
+                   else "skipped_empty")
+            counts[key] += 1
+            continue
+
+        label = str(row.get("defect_type") or config.DEFECT_TYPE_UNSPECIFIED)
+        counts["images"] += 1
+        counts["boxes"] += len(found)
+        made.extend(
+            Box(image_id=image_id, x=x, y=y, w=w, h=h, label=label, source=SOURCE_MASK,
+                note="마스크에서 자동 생성")
+            for x, y, w, h in found
+        )
+
+    if made:
+        _append(made, replacing={box.image_id for box in made} if overwrite else set())
+    return counts
+
+
+def _append(made: list[Box], *, replacing: set[str]) -> None:
+    """만든 박스를 표에 더한다. `replacing`에 있는 이미지는 먼저 비운다."""
+    frame = load()
+    if not frame.empty and replacing:
+        frame = frame[~frame["image_id"].astype(str).isin(replacing)]
+
+    stamp = _now()
+    per_image: dict[str, int] = {}
+    rows = []
+    for box in made:
+        per_image[box.image_id] = per_image.get(box.image_id, 0) + 1
+        rows.append(
+            {
+                "box_id": f"{box.image_id}#{per_image[box.image_id]}",
+                "image_id": box.image_id,
+                "x": box.x, "y": box.y, "w": box.w, "h": box.h,
+                "label": box.label, "source": box.source,
+                "created_at": stamp, "note": box.note,
+            }
+        )
+    save(pd.concat([frame, pd.DataFrame(rows, columns=list(COLUMNS))], ignore_index=True))
+
+
+def mask_candidates(resolved: pd.DataFrame) -> dict:
+    """자동 생성으로 얼마나 채워지는지 미리 센다 (마스크를 읽지 않고 파일 존재만 본다)."""
+    from . import labeling
+
+    frame = load()
+    taken = set(frame["image_id"].astype(str)) if not frame.empty else set()
+    defects = resolved[resolved["label"].astype(str) == config.LABEL_DEFECT]
+
+    ready = without_mask = already = 0
+    for _, row in defects.iterrows():
+        if str(row["image_id"]) in taken:
+            already += 1
+        elif labeling.find_mask_path(storage.resolve_path(str(row["path"]))) is None:
+            without_mask += 1
+        else:
+            ready += 1
+    return {"ready": ready, "without_mask": without_mask, "already": already}
 
 
 def summary(frame: pd.DataFrame | None = None) -> dict:

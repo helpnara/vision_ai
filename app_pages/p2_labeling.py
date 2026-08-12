@@ -581,6 +581,8 @@ def _box_export(resolved: pd.DataFrame) -> None:
     cols[2].metric("클래스", f"{info['labels']:,}종")
     cols[3].metric("이미지당 평균", f"{info['per_image']:.1f}개")
 
+    _mask_boxes(resolved)
+
     if not info["boxes"]:
         st.caption(
             "아직 박스가 없습니다. **라벨 검수** 탭에서 결함으로 판정하고 이미지 위에 그리세요."
@@ -627,6 +629,74 @@ def _box_export(resolved: pd.DataFrame) -> None:
         )
 
     _detection_export(resolved, frame)
+
+
+def _mask_boxes(resolved: pd.DataFrame) -> None:
+    """결함 마스크에서 박스를 일괄로 만든다.
+
+    검출 학습에는 박스가 수백 장 필요한데 손으로만 그리면 며칠이 걸린다. VisA·MVTec은
+    결함 픽셀 마스크를 함께 주므로 그것을 박스로 바꾸면 바로 채워진다.
+
+    **덩어리마다 하나씩** 만든다. 결함 픽셀 전부를 한 박스로 감싸면 실측으로 면적이 평균
+    2.5배가 되고, 그 박스의 절반 가까이가 배경이라 모델이 배경을 결함이라고 배운다.
+    """
+    state = box_store.mask_candidates(resolved)
+    if not (state["ready"] or state["already"]):
+        return
+
+    with st.expander(
+        f"🎭 마스크에서 박스 자동 생성 ({state['ready']:,}장 가능)",
+        expanded=not st.session_state.get("p2_mask_done"),
+    ):
+        st.caption(
+            "VisA·MVTec이 함께 주는 결함 픽셀 마스크를 박스로 바꿉니다. **떨어져 있는 결함은 "
+            "따로따로** 박스가 됩니다 — 전부 한 박스로 묶으면 절반이 배경이라 모델이 배경을 "
+            "결함이라고 배웁니다. **이미 박스가 있는 이미지는 건드리지 않습니다.**"
+        )
+        cols = st.columns(3)
+        cols[0].metric("자동 생성 가능", f"{state['ready']:,}장")
+        cols[1].metric("이미 박스 있음", f"{state['already']:,}장")
+        cols[2].metric("마스크 없음", f"{state['without_mask']:,}장")
+
+        unspecified = int(
+            (
+                (resolved["label"].astype(str) == config.LABEL_DEFECT)
+                & (resolved["defect_type"].astype(str) == config.DEFECT_TYPE_UNSPECIFIED)
+            ).sum()
+        )
+        if unspecified:
+            st.caption(
+                f"⚠️ 결함 {unspecified:,}장은 유형이 미지정입니다. 박스도 미지정으로 들어가 "
+                "**\"결함이 어디 있는가\"만 배우는 1클래스 검출**이 됩니다. 유형별로 나누려면 "
+                "**결함 유형 정규화** 탭을 먼저 거치세요."
+            )
+
+        if not state["ready"]:
+            st.caption("새로 만들 것이 없습니다.")
+            return
+        if not st.button(
+            f"🎭 {state['ready']:,}장에 박스 만들기", key="p2_mask_boxes", type="primary"
+        ):
+            return
+
+        progress = ui.Progress("마스크에서 박스 만드는 중", note="이미지마다 마스크를 읽습니다.")
+        counts = box_store.from_masks(resolved, progress=progress.update)
+        progress.done()
+
+        st.success(
+            f"{counts['images']:,}장에 박스 {counts['boxes']:,}개를 만들었습니다 "
+            f"(장당 평균 {counts['boxes'] / max(counts['images'], 1):.1f}개).",
+            icon="✅",
+        )
+        for key, text in (
+            ("skipped_existing", "이미 박스가 있어 건드리지 않은 이미지"),
+            ("skipped_no_mask", "마스크가 없어 건너뛴 이미지"),
+            ("skipped_empty", "마스크가 비어 있거나 잡티뿐이라 건너뛴 이미지"),
+        ):
+            if counts[key]:
+                st.caption(f"{text} {counts[key]:,}장")
+        st.session_state["p2_mask_done"] = True
+        st.rerun()
 
 
 def _detection_export(resolved: pd.DataFrame, frame: pd.DataFrame) -> None:

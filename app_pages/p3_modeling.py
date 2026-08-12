@@ -19,6 +19,7 @@ from vision_ai import (
     labeling,
     models,
     monitoring,
+    patch_cache,
     registry,
     report,
     settings as user_settings,
@@ -471,34 +472,52 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
         _heatmap_section(df)
         return
 
+    model = models.PatchAnomalyModel(
+        models.AnomalyConfig(
+            per_position=per_position, image_score=score_mode, backend=backend
+        )
+    )
+    cache = patch_cache.load(model.config)
+    reused_before = len(cache)
+
     bar = st.progress(0.0, text="정상 분포 학습 중...")
     try:
-        images = []
-        for index, path in enumerate(train_normal["path_abs"], start=1):
-            image = viz.load_rgb(path)
-            if image is not None:
-                images.append(image)
-            bar.progress(index / len(train_normal) * 0.5, text=f"정상 학습 {index}/{len(train_normal)}")
-        model = models.PatchAnomalyModel(
-            models.AnomalyConfig(
-                per_position=per_position, image_score=score_mode, backend=backend
+        model.fit_grids(
+            grid for _, grid in patch_cache.grids_for(
+                train_normal, model, cache=cache,
+                progress=lambda done, total: bar.progress(
+                    done / max(total, 1) * 0.5, text=f"정상 학습 {done}/{total}"
+                ),
             )
-        ).fit(images)
+        )
     except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
         bar.empty()
+        patch_cache.save(cache)   # 학습이 실패해도 뽑아 둔 특징은 남긴다
         st.error(f"학습 실패: {exc}")
         return
 
     scores, ys, ids = [], [], []
-    for index, (_, row) in enumerate(eval_rows.iterrows(), start=1):
-        image = viz.load_rgb(row["path_abs"])
-        if image is None:
-            continue
-        scores.append(model.image_score(image))
-        ys.append(int(row["y"]))
-        ids.append(str(row["image_id"]))
-        bar.progress(0.5 + index / len(eval_rows) * 0.5, text=f"평가 {index}/{len(eval_rows)}")
+    truth = {str(row["image_id"]): int(row["y"]) for _, row in eval_rows.iterrows()}
+    for image_id, grid in patch_cache.grids_for(
+        eval_rows, model, cache=cache,
+        progress=lambda done, total: bar.progress(
+            0.5 + done / max(total, 1) * 0.5, text=f"평가 {done}/{total}"
+        ),
+    ):
+        scores.append(model.aggregate(model.score_grid_features(grid)))
+        ys.append(truth[image_id])
+        ids.append(image_id)
     bar.empty()
+
+    added = cache.added
+    patch_cache.save(cache)
+    if added:
+        st.caption(
+            f"격자 특징 {added:,}장을 새로 뽑아 저장했습니다 (저장해 둔 것 재사용 "
+            f"{reused_before:,}장). 다음 실행부터는 이 부분을 건너뜁니다."
+        )
+    elif len(cache):
+        st.caption(f"저장해 둔 격자 특징 {len(cache):,}장을 그대로 썼습니다.")
 
     if not scores:
         st.error("평가할 이미지를 읽지 못했습니다.")

@@ -224,7 +224,9 @@ src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
   ui.py                    화면 밀도 · 사이드바 레일 · 좁은 화면용 표 · 진행 표시 · 영역 드래그
   video.py                 영상 프레임 추출 (간격 계산 · 중복 제거 · 시험용 영상)
   boxes.py                 이미지 한 장의 결함 박스 여러 개 (COCO/YOLO 내보내기)
-  feature_cache.py         이미지 특징 캐시 (이미지 단위 · 프로젝트별)
+  detection.py             지도학습 검출 학습 폴더 내보내기 (images/ + labels/ + data.yaml)
+  feature_cache.py         분류용 이미지 특징 캐시 (이미지 단위 · 프로젝트별)
+  patch_cache.py           이상탐지용 격자 특징 캐시 (무압축 float16 · memmap)
   guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장)
   glossary.py              지표 설명 · 결과 판정 · 용어 · 표의 열 도움말 · 임의값 출처
   quickstart.py            빠른 시작 (생성→분할→학습→승격 한 번에)

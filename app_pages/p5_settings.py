@@ -6,7 +6,7 @@ from dataclasses import fields
 
 import streamlit as st
 
-from vision_ai import config, evaluate, feature_cache, projects, settings
+from vision_ai import config, evaluate, feature_cache, patch_cache, projects, settings
 
 
 def _slider(name: str, current, *, percent: bool) -> float:
@@ -197,11 +197,13 @@ def _cache_section() -> None:
     (특징 이름·입력 크기가 바뀌면 캐시는 자동으로 버려지므로, 평소에는 쓸 일이 없다.)
     """
     st.subheader("특징 캐시")
-    info = feature_cache.summary()
     st.caption(
         "한 번 계산한 이미지 특징을 저장해 두고 다시 씁니다. 이미지 단위로 저장하므로 "
         "데이터가 늘어나면 늘어난 만큼만 계산합니다. 지워도 다음 학습 때 다시 만들어집니다."
     )
+
+    info = feature_cache.summary()
+    st.markdown("**분류용 (이미지 한 장 = 숫자 14개)**")
     cols = st.columns(3)
     cols[0].metric("저장된 이미지", f"{info['count']:,}장")
     cols[1].metric("파일 크기", f"{info['size_mb']:.1f} MB")
@@ -211,6 +213,23 @@ def _cache_section() -> None:
             st.success("비웠습니다. 다음 학습에서 다시 계산합니다.", icon="✅")
             st.rerun()
     st.caption(f"저장 위치: `{feature_cache.cache_path()}`")
+
+    # 이상탐지 격자 특징은 장당 53KB로 분류용의 약 천 배다. 같은 화면에 두되 따로 센다 —
+    # "캐시 200MB"라고만 보이면 어느 쪽이 자리를 차지하는지 알 수가 없다.
+    patches = patch_cache.summary()
+    st.markdown("**이상탐지용 (격자 31×31마다 숫자 14개)**")
+    st.caption(
+        "장당 53KB로 분류용의 약 천 배입니다. 그래서 압축하지 않고 float16으로 저장하고, "
+        "쓸 때 필요한 줄만 읽습니다. 설정(백엔드·패치 크기)이 다르면 따로 쌓입니다."
+    )
+    cols = st.columns(3)
+    cols[0].metric("저장된 이미지", f"{patches['count']:,}장")
+    cols[1].metric("파일 크기", f"{patches['size_mb']:.0f} MB", help=f"설정 {patches['variants']}종")
+    with cols[2]:
+        if st.button("🗑️ 격자 캐시 비우기", key="p5_patch_clear", disabled=patches["count"] == 0):
+            patch_cache.clear()
+            st.success("비웠습니다. 다음 학습에서 다시 계산합니다.", icon="✅")
+            st.rerun()
 
 
 def _preview(candidate: settings.Settings) -> None:

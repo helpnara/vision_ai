@@ -182,10 +182,12 @@ class PatchAnomalyModel:
         self.n_train = 0
         self._extractor = None   # CNN 백엔드에서만 쓴다 (모델을 한 번만 읽도록)
 
-    def _grid_features(self, image: np.ndarray) -> np.ndarray:
+    def grid_features(self, image: np.ndarray) -> np.ndarray:
         """이미지 한 장 → (높이, 너비, 차원) 격자 특징.
 
         학습과 추론이 **반드시 같은 방식**을 써야 하므로 추출을 여기 한 곳에 둔다.
+        캐시(`patch_cache`)도 이 함수의 결과를 담는다 — 담는 것과 쓰는 것이 갈리면
+        캐시가 있을 때와 없을 때 결과가 달라진다.
         """
         if self.config.backend != BACKEND_CNN:
             return features.patch_features(image, self.config.patch, self.config.stride)
@@ -201,12 +203,19 @@ class PatchAnomalyModel:
     # -- 학습 --
     def fit(self, images: Iterable[np.ndarray]) -> "PatchAnomalyModel":
         """정상 이미지들로 학습한다."""
+        return self.fit_grids(self.grid_features(image) for image in images)
+
+    def fit_grids(self, grids: Iterable[np.ndarray]) -> "PatchAnomalyModel":
+        """이미 뽑아 둔 격자 특징으로 학습한다.
+
+        캐시가 있으면 이미지를 읽을 필요조차 없으므로 이 통로가 따로 필요하다.
+        """
         stacks: list[np.ndarray] = []
-        for image in images:
-            grid = self._grid_features(image)
+        for grid in grids:
+            grid = np.asarray(grid, dtype=np.float64)
             stacks.append(grid.reshape(-1, grid.shape[-1]))
             if self._grid is None:
-                self._grid = grid.shape[:2]
+                self._grid = tuple(int(v) for v in grid.shape[:2])
 
         if not stacks:
             raise ValueError("학습할 정상 이미지가 없습니다.")
@@ -246,9 +255,13 @@ class PatchAnomalyModel:
     # -- 추론 --
     def score_grid(self, rgb: np.ndarray) -> np.ndarray:
         """격자별 마할라노비스 거리를 반환한다."""
+        return self.score_grid_features(self.grid_features(rgb))
+
+    def score_grid_features(self, grid: np.ndarray) -> np.ndarray:
+        """이미 뽑아 둔 격자 특징에서 거리를 낸다 (캐시가 쓰는 통로)."""
         if not self.is_fitted:
             raise RuntimeError("학습되지 않은 모델입니다.")
-        grid = self._grid_features(rgb)
+        grid = np.asarray(grid, dtype=np.float64)
         rows, cols, dim = grid.shape
         flat = grid.reshape(-1, dim)
 

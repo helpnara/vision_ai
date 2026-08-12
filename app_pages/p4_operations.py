@@ -19,6 +19,7 @@ from vision_ai import (
     playback,
     registry,
     scenario,
+    segments,
     serving,
     settings as user_settings,
     storage,
@@ -688,6 +689,76 @@ def _drift_tab(df: pd.DataFrame) -> None:
 
 # --- 4) 성능 추이 -------------------------------------------------------------
 
+def _figure(value: float, suffix: str = "") -> str:
+    """잴 수 없는 값을 0으로 적지 않는다 — 0은 «못 잡았다»로 읽힌다."""
+    return f"{value:.2f}{suffix}" if np.isfinite(value) else "—"
+
+
+def _segment_section(df: pd.DataFrame, feedback: pd.DataFrame) -> None:
+    """구간 단위 검출률 (V3).
+
+    프레임 단위 숫자는 결함이 여러 장에 걸칠 때 **실제보다 나쁘게** 나온다. 100프레임짜리
+    결함에서 3장만 잡아도 알람은 울렸는데 재현율은 3%로 찍힌다. 두 숫자를 나란히 놓고
+    서로 다르면 그 사실을 말해 준다.
+    """
+    st.markdown("### 영상·구간 단위 검출률")
+    st.caption(
+        "현장이 묻는 것은 «이 영상에 있던 결함을 잡았느냐»이지 «프레임 몇 %를 맞혔느냐»가 "
+        "아닙니다. 구간 하나를 한 건으로 세고, 오경보는 **분당 횟수**로 냅니다."
+    )
+
+    names = segments.videos_in(feedback)
+    if not names:
+        st.info(
+            "영상 프레임의 판정 로그가 없습니다. **배치 추론 → 대상: 영상 하나**를 먼저 "
+            "실행하세요.",
+            icon="🎞️",
+        )
+        return
+
+    col1, col2, col3 = st.columns(3)
+    picked = col1.selectbox("영상", names, key="p4_seg_video")
+    fps = col2.number_input(
+        "영상 fps", 1.0, 240.0, 30.0, 1.0, key="p4_seg_fps",
+        help="구간의 «몇 초»를 계산할 때만 씁니다. 몰라도 구간 수와 검출률은 같습니다.",
+    )
+    min_hits = col3.number_input(
+        "잡았다고 볼 최소 프레임", 1, 20, segments.DEFAULT_MIN_HITS, 1, key="p4_seg_hits",
+        help=(
+            "기본은 1장입니다 — 알람이 목적이면 한 번 울리는 것으로 충분합니다. 사람이 "
+            "확인하러 가는 비용이 크면 올려서 «한 장은 튄 것일 수 있다»를 반영하세요."
+        ),
+    )
+
+    report = segments.from_feedback(
+        feedback, labeling.video_frames(df), picked, fps=float(fps), min_hits=int(min_hits)
+    )
+    if report is None:
+        st.caption("이 영상은 정답과 대조할 프레임이 부족합니다.")
+        return
+
+    cols = st.columns(4)
+    cols[0].metric("구간 재현율", _figure(report.segment_recall))
+    cols[1].metric("프레임 재현율", _figure(report.frame_recall))
+    cols[2].metric("놓친 구간", f"{len(report.missed)}곳")
+    cols[3].metric("헛알람", f"분당 {_figure(report.false_alarms_per_min)}회")
+    st.markdown(report.summary())
+
+    contrast = report.contrast()
+    if contrast:
+        st.warning(contrast, icon="📐")
+
+    if report.missed:
+        st.error(
+            "놓친 구간 — " + ", ".join(s.span_text() for s in report.missed[:10]),
+            icon="🚨",
+        )
+    if report.false_alarms:
+        st.caption(
+            "헛알람 구간 — " + ", ".join(s.span_text() for s in report.false_alarms[:10])
+        )
+
+
 def _performance_tab(df: pd.DataFrame) -> None:
     st.markdown(
         "사후 검수로 확인된 정답과 모델 판정을 비교한다. 정답의 출처는 2단계에서 **사람이 확인한** "
@@ -738,6 +809,9 @@ def _performance_tab(df: pd.DataFrame) -> None:
         )
         misses = feedback[feedback["outcome"] == "FN"]
         _gallery(df, misses.head(8))
+
+    st.divider()
+    _segment_section(df, feedback)
 
     st.divider()
     st.markdown("**버전별 실측 성능**")

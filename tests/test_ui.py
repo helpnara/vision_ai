@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -636,3 +637,35 @@ def test_the_timeline_leaves_room_to_actually_drag():
     축 눈금·제목이 약 55px을 쓴다.
     """
     assert ui.TIMELINE_HEIGHT >= 130
+
+
+# --- 화면 파일의 실수 잠그기 -------------------------------------------------
+
+@pytest.mark.parametrize("path", [
+    "app.py",
+    "app_pages/home.py",
+    "app_pages/p1_ingest.py",
+    "app_pages/p2_labeling.py",
+    "app_pages/p3_modeling.py",
+    "app_pages/p4_operations.py",
+    "app_pages/p5_settings.py",
+])
+def test_page_files_have_no_stray_strings_that_streamlit_would_print(path):
+    """**Streamlit은 모듈 수준의 맨 문자열을 화면에 그대로 출력한다.**
+
+    상수 밑에 설명을 docstring처럼 달았더니 «이 비율을 넘게 버렸으면...»이 페이지 제목
+    위에 찍혔다. 화면을 눈으로 보고서야 알았다 — 테스트도 앱도 아무 소리를 안 낸다.
+    화면 파일에서는 그런 설명을 주석으로 달아야 한다.
+    """
+    import ast
+
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    stray = [
+        node.lineno
+        for index, node in enumerate(tree.body)
+        if index > 0                                  # 맨 앞 모듈 docstring은 정상
+        and isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+    assert not stray, f"{path}의 {stray}번 줄 문자열이 화면에 출력된다 — 주석으로 바꿀 것"

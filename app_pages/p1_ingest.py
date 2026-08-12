@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from vision_ai import config, datasets, glossary, ingest, quality, storage, ui, video
+from vision_ai import config, datasets, framing, glossary, ingest, quality, storage, ui, video
 
 FIT_STARS = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2: "★★☆☆☆", 1: "★☆☆☆☆"}
 
@@ -318,6 +318,8 @@ def _video_tab() -> None:
     cols[2].metric("전체 프레임", f"{info.frame_count:,}")
     cols[3].metric("해상도", f"{info.width}×{info.height}")
 
+    _framing_check(info)
+
     plan = _extraction_plan(info)
     if plan is None:
         return
@@ -381,8 +383,9 @@ def _video_tab() -> None:
     st.info("다음 — **2단계 라벨링**에서 결함 구간과 위치를 지정합니다.", icon="➡️")
 
 
+# 이 비율을 넘게 버렸으면 사용자에게 알린다. 잘 걸러진 것일 수도, 전멸한 것일 수도 있다.
+# (주석으로 둔다 — 화면 파일에서 모듈 수준 문자열은 Streamlit이 그대로 출력해 버린다.)
 MOSTLY_DROPPED = 0.8
-"""이 비율을 넘게 버렸으면 사용자에게 알린다. 잘 걸러진 것일 수도, 전멸한 것일 수도 있다."""
 
 
 def _warn_if_mostly_dropped(extracted, plan) -> None:
@@ -405,6 +408,96 @@ def _warn_if_mostly_dropped(extracted, plan) -> None:
             f"연속으로 너무 오래 버려서 {extracted.forced:,}장을 강제로 남겼습니다 — "
             "이 표시가 보이면 중복 판정이 이 영상에 잘 안 맞는다는 뜻입니다."
         )
+
+
+def _framing_check(info) -> None:
+    """이 촬영으로 결함이 보이기는 하는가 (V0).
+
+    **모델을 고르기 전에 답해야 하는 질문이다.** 결함이 3픽셀로 잡히면 어떤 모델을 써도
+    안 되는데, 보통은 프레임을 다 뽑고 라벨링을 하고 학습을 돌린 뒤에야 그 사실이 드러난다.
+    그래서 **추출 버튼 위에** 둔다 — 며칠 뒤에 알 일을 지금 알려주자는 것.
+    """
+    with st.expander("📏 이 촬영으로 결함이 보이는가 (추출 전에 확인)", expanded=False):
+        st.caption(
+            "결함이 **모델 입력에서 몇 픽셀**이 되는지 계산합니다. 원본에서 100픽셀이어도 "
+            "학습할 때 640으로 줄이면 그만큼 작아집니다 — 판정은 줄인 뒤 크기로 해야 합니다."
+        )
+
+        left, middle, right = st.columns(3)
+        fov_m = left.number_input(
+            "카메라가 담는 폭 (m)", 0.05, 50.0, 1.0, 0.05, key="video_fov",
+            help="카메라 한 대가 화면 가로에 담는 실제 폭. 컨베이어 한 줄이면 1m 안팎입니다.",
+        )
+        defect_mm = middle.number_input(
+            "잡아야 하는 가장 작은 결함 (mm)", 0.1, 500.0, 10.0, 0.5, key="video_defect_mm",
+            help="짧은 변 기준입니다. 가장 작은 것을 넣으세요 — 그것이 기준을 정합니다.",
+        )
+        names = list(framing.MODEL_INPUT_PX)
+        model_name = right.selectbox("어디에 태울 것인가", names, key="video_model_px")
+
+        tiles = st.slider(
+            "타일 분할 (가로 등분 수)", 1, 8, 1, key="video_tiles",
+            help="프레임을 잘라 조각마다 추론하면 같은 결함이 입력에서 커집니다. "
+                 "소프트웨어만 고치면 되지만 추론 횟수가 등분 수의 제곱만큼 늘어납니다.",
+        )
+
+        view = framing.Framing(
+            defect_mm=float(defect_mm), fov_mm=float(fov_m) * 1000,
+            sensor_px=int(info.width), model_px=framing.MODEL_INPUT_PX[model_name],
+            tiles=int(tiles),
+        )
+
+        stat = st.columns(3)
+        stat[0].metric("원본에서", f"{view.native_px:.0f}px")
+        stat[1].metric("모델 입력에서", f"{view.model_input_px:.0f}px")
+        stat[2].metric("판정", view.verdict)
+        st.caption(
+            f"이 촬영으로 잡을 수 있는 **가장 작은 결함은 약 {view.smallest_catchable_mm():.0f}mm**입니다. "
+            f"(안정 기준 {framing.SAFE_PX:.0f}px · 한계 {framing.FLOOR_PX:.0f}px)"
+        )
+
+        note = framing.advice(view)
+        if view.verdict == framing.VERDICT_OK:
+            st.success(note, icon="✅")
+        elif view.verdict == framing.VERDICT_HARD:
+            st.warning(note, icon="⚠️")
+        else:
+            st.error(note, icon="🚫")
+
+        for lever in framing.levers(view):
+            if lever.reachable:
+                st.caption(f"**{lever.name}** — {lever.change} · {lever.cost}")
+            else:
+                st.caption(
+                    f"~~**{lever.name}** — {lever.change}~~ · "
+                    "**원본에 그만한 정보가 없어 소용없습니다** (확대는 없던 것을 만들지 못합니다)"
+                )
+
+        _framing_hint_from_boxes(float(fov_m) * 1000)
+
+
+def _framing_hint_from_boxes(fov_mm: float) -> None:
+    """결함 크기를 모를 때, 이미 그려 둔 박스로 어림한다.
+
+    실물 크기를 자로 재 본 사람은 드물지만 라벨링한 박스는 있다. 다만 **비율은 그 촬영을
+    어떻게 했느냐의 결과이지 물리 상수가 아니므로**, 그 촬영이 담던 폭을 함께 물어야 한다.
+    """
+    from vision_ai import boxes as box_store
+
+    frame = box_store.load()
+    if frame.empty:
+        return
+    fraction = framing.fraction_from_boxes(frame, storage.load_manifest())
+    if not fraction:
+        return
+
+    st.caption(
+        f"참고 — 지금 이 프로젝트에 그려 둔 박스의 짧은 변 중앙값은 **화면 폭의 "
+        f"{fraction:.2%}** 입니다. 그 이미지를 담던 폭이 "
+        f"{framing.TYPICAL_SOURCE_FOV_MM / 1000:.1f}m였다면 결함 실물은 약 "
+        f"**{framing.defect_mm_from_fraction(fraction, framing.TYPICAL_SOURCE_FOV_MM):.0f}mm**입니다. "
+        "비율은 촬영 방식에 따라 달라지므로 실제로 한 번 재 보는 편이 훨씬 정확합니다."
+    )
 
 
 SOURCE_LIST = "목록에서 고르기"

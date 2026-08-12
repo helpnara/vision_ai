@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,9 @@ INFERENCE_CSV = "inference_log.csv"
 
 INFERENCE_COLUMNS: tuple[str, ...] = (
     "logged_at", "version", "image_id", "source", "category",
+    # group = 이 이미지가 나온 묶음(영상 id). 영상 B를 판정하고 나서 "그 영상만" 성능을
+    # 갈라 보려면 로그에 남아 있어야 한다 — 나중에는 되짚을 방법이 없다.
+    "group",
     "score", "threshold", "decision", "latency_ms", "note",
 )
 
@@ -82,9 +86,41 @@ def log_inference(records: list[dict], *, note: str = "") -> int:
 
     config.ensure_dirs()
     path = _log_path()
+    _migrate_log(path)
     header = not path.exists() or path.stat().st_size == 0
     frame.to_csv(path, mode="a", header=header, index=False)
     return len(frame)
+
+
+def _migrate_log(path) -> None:
+    """열이 늘어났으면 기존 로그를 새 열 구성으로 다시 쓴다.
+
+    **이어 붙이기는 헤더를 다시 쓰지 않는다.** 그래서 열이 하나 늘어난 채로 그냥 붙이면
+    줄마다 칸 수가 달라져 **파일 전체를 못 읽게 된다** — 예전 판정 이력이 통째로 날아간다.
+    늘어난 칸은 비워서 채우고, 원자적으로 바꿔치기한다.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    try:
+        existing = pd.read_csv(path, dtype={"image_id": "str", "version": "str"})
+    except (OSError, ValueError):
+        return                      # 이미 깨진 파일은 건드리지 않는다
+    if list(existing.columns) == list(INFERENCE_COLUMNS):
+        return
+    if not set(existing.columns) <= set(INFERENCE_COLUMNS):
+        # 우리가 쓴 로그가 아니거나 우리가 모르는 열이 있다. **남의 파일을 다시 쓰지 않는다** —
+        # 열을 맞추려다 그 안에 있던 것을 잃는 편이 못 읽는 것보다 나쁘다.
+        return
+
+    for column in INFERENCE_COLUMNS:
+        if column not in existing.columns:
+            existing[column] = pd.NA
+    temporary = path.with_suffix(f".{os.getpid()}.tmp.csv")
+    try:
+        existing[list(INFERENCE_COLUMNS)].to_csv(temporary, index=False)
+        os.replace(temporary, path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
 
 
 def clear_log() -> None:

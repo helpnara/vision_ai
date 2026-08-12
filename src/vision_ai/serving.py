@@ -173,6 +173,8 @@ def run_batch(
                     "image_id": str(row.get("image_id", "")),
                     "source": str(row.get("source", "")),
                     "category": category,
+                    # 이 이미지가 어느 영상에서 나왔는지. 지금 안 남기면 나중에 못 되짚는다.
+                    "group": str(row.get("group") or ""),
                     "score": score,
                     "threshold": used,
                     "decision": config.LABEL_DEFECT if score >= used else config.LABEL_NORMAL,

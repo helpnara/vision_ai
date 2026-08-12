@@ -836,3 +836,90 @@ def test_an_explicit_threshold_still_overrides_everything(sandbox, tmp_path):
 
     frame = serving.run_batch(model, rows, threshold=0.77).frame()
     assert float(frame.iloc[0]["threshold"]) == 0.77
+
+
+# --- 로그에 영상 id를 남긴다 (V1) --------------------------------------------
+#
+# 영상 B를 판정하고 나서 "그 영상만" 성능을 갈라 보려면 로그에 남아 있어야 한다.
+# 추론이 끝난 뒤에는 되짚을 방법이 없다.
+
+def test_the_log_carries_the_video_it_came_from(sandbox, tmp_path):
+    import cv2
+
+    run_id, artifact = _make_run()
+    version = registry.register(run_id, artifact=artifact, promote_now=True).version
+    model = serving.load_version(version)
+
+    path = tmp_path / "frame.png"
+    cv2.imwrite(str(path), np.full((64, 64, 3), 120, dtype=np.uint8))
+    rows = pd.DataFrame([{
+        "image_id": "f1", "path_abs": str(path), "source": "video:cam-b",
+        "category": "line1", "group": "cam-b-9f3a1c22",
+    }])
+
+    result = serving.run_batch(model, rows)
+    assert result.records[0]["group"] == "cam-b-9f3a1c22"
+
+    monitoring.log_inference(result.records)
+    assert monitoring.load_log().iloc[0]["group"] == "cam-b-9f3a1c22"
+
+
+def test_images_that_belong_to_no_video_leave_the_column_empty(sandbox, tmp_path):
+    """낱장 사진에는 영상 id가 없다. 없다고 판정이 막히면 안 된다."""
+    import cv2
+
+    run_id, artifact = _make_run()
+    version = registry.register(run_id, artifact=artifact).version
+    model = serving.load_version(version)
+
+    path = tmp_path / "photo.png"
+    cv2.imwrite(str(path), np.full((64, 64, 3), 120, dtype=np.uint8))
+    rows = pd.DataFrame([{"image_id": "p1", "path_abs": str(path)}])
+
+    assert serving.run_batch(model, rows).records[0]["group"] == ""
+
+
+def test_an_old_log_without_the_column_is_migrated_not_broken(sandbox):
+    """**이어 붙이기는 헤더를 다시 쓰지 않는다.**
+
+    열이 하나 늘어난 채로 그냥 붙이면 줄마다 칸 수가 달라져 파일 전체를 못 읽게 된다 —
+    예전 판정 이력이 통째로 날아간다. 그래서 붙이기 전에 다시 쓴다.
+    """
+    old_columns = [c for c in monitoring.INFERENCE_COLUMNS if c != "group"]
+    path = monitoring._log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [{name: "옛값" for name in old_columns}], columns=old_columns
+    ).to_csv(path, index=False)
+
+    monitoring.log_inference([{
+        "version": "v002", "image_id": "new", "source": "s", "category": "c",
+        "group": "cam-b", "score": 0.5, "threshold": 0.4, "decision": "defect",
+        "latency_ms": 1.0,
+    }])
+
+    log = monitoring.load_log()
+    assert len(log) == 2, "예전 줄이 살아 있어야 한다"
+    assert list(log.columns) == list(monitoring.INFERENCE_COLUMNS)
+    assert pd.isna(log.iloc[0]["group"])        # 예전 줄은 영상 id를 모른다
+    assert log.iloc[1]["group"] == "cam-b"
+
+
+def test_migrating_twice_changes_nothing(sandbox):
+    monitoring.log_inference([{
+        "version": "v001", "image_id": "a", "group": "cam-a",
+        "score": 0.1, "threshold": 0.2, "decision": "normal", "latency_ms": 1.0,
+    }])
+    before = monitoring._log_path().read_text(encoding="utf-8")
+    monitoring._migrate_log(monitoring._log_path())
+    assert monitoring._log_path().read_text(encoding="utf-8") == before
+
+
+def test_a_corrupt_log_is_left_alone_rather_than_destroyed(sandbox):
+    """이미 깨진 파일을 다시 쓰면 남아 있던 것까지 잃는다."""
+    path = monitoring._log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    broken = "\x00\x01 이건 csv가 아니다".encode("utf-8")
+    path.write_bytes(broken)
+    monitoring._migrate_log(path)
+    assert path.read_bytes() == broken

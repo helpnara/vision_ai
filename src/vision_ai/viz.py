@@ -6,12 +6,31 @@ Streamlit은 RGB 배열을 기대하지만 OpenCV는 BGR을 쓴다. 이 변환�
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 ROI_COLOR = (255, 64, 64)  # RGB — 결함 위치 표시색
+
+# 그림 위에 한글을 얹으려면 글꼴 파일이 필요하다. OpenCV가 들고 있는 Hershey 글꼴에는
+# 한글 자모가 없어서 `putText`로는 네모만 찍힌다. 아래 후보를 순서대로 찾아보고 하나도
+# 없으면 한글을 포기하고 영문 대체 문구를 찍는다 — 글꼴이 없다고 그림을 못 만들면 안 된다.
+FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",            # macOS
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    "C:/Windows/Fonts/malgun.ttf",                            # Windows
+)
+
+# 파일이 있다고 한글이 나오는 것은 아니다. **CJK라는 이름에 속으면 안 된다** — 이 환경에
+# 깔린 일본어 고딕은 한자는 그리지만 한글 자리에는 네모(두부 글자)를 찍는다. 그림에 네모가
+# 줄줄이 찍힌 뒤에야 알게 되므로, 쓰기 전에 «없는 글자»와 같은 모양인지 대 본다.
+_MISSING_CODEPOINT = "\U000FFFFD"  # 사용자 정의 영역 — 어떤 글꼴에도 없다
+_PROBE_CHAR = "가"
 
 
 def to_rgb(image: np.ndarray) -> np.ndarray:
@@ -67,6 +86,80 @@ def overlay_mask(
     tint = np.full_like(rgb, color, dtype=np.float32)
     blended = rgb.astype(np.float32) * (1 - weight) + tint * weight
     return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+@functools.lru_cache(maxsize=1)
+def korean_font_path() -> str | None:
+    """한글을 그릴 수 있는 글꼴 파일 경로. 없으면 None.
+
+    글꼴을 찾는 일은 파일 존재 확인이라 싸지만, 프레임마다 하면 수백 번이 된다. 결과가
+    바뀔 일이 없으므로 한 번만 찾는다.
+    """
+    for candidate in FONT_CANDIDATES:
+        if Path(candidate).exists() and draws_hangul(candidate):
+            return candidate
+    return None
+
+
+def draws_hangul(font_path: str) -> bool:
+    """이 글꼴이 한글을 실제로 그리는가. 두부 글자면 False."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+    try:
+        font = ImageFont.truetype(font_path, 24)
+    except OSError:
+        return False
+
+    def ink(char: str) -> np.ndarray:
+        canvas = Image.new("L", (48, 48), 0)
+        ImageDraw.Draw(canvas).text((2, 2), char, font=font, fill=255)
+        return np.asarray(canvas)
+
+    return not np.array_equal(ink(_PROBE_CHAR), ink(_MISSING_CODEPOINT))
+
+
+def put_text(
+    rgb: np.ndarray,
+    text: str,
+    origin: tuple[int, int],
+    *,
+    color: tuple[int, int, int] = ROI_COLOR,
+    size: int = 20,
+    ascii_fallback: str = "",
+) -> np.ndarray:
+    """이미지 위에 글자를 얹는다. 한글이면 글꼴을 찾아 쓰고, 없으면 영문으로 대체한다.
+
+    `origin`은 글자 상자의 **왼쪽 위** 모서리다 — OpenCV의 `putText`가 쓰는 기준선(baseline)이
+    아니다. 판정 띠처럼 «여기부터 아래로» 그리는 자리가 대부분이라 이 편이 계산이 쉽다.
+    """
+    if not text:
+        return rgb
+    font_path = korean_font_path()
+    if font_path is None:
+        legible = ascii_fallback or text.encode("ascii", "replace").decode("ascii")
+        out = rgb.copy()
+        scale = size / 30.0
+        cv2.putText(
+            out, legible, (origin[0], origin[1] + size), cv2.FONT_HERSHEY_SIMPLEX,
+            scale, color, max(1, round(scale * 2)), cv2.LINE_AA,
+        )
+        return out
+
+    from PIL import Image, ImageDraw  # 지연 임포트 — 글꼴이 있을 때만 필요하다
+
+    image = Image.fromarray(rgb)
+    ImageDraw.Draw(image).text(origin, text, font=_font(font_path, size), fill=color)
+    return np.asarray(image)
+
+
+@functools.lru_cache(maxsize=8)
+def _font(path: str, size: int):
+    """글꼴 파일을 크기별로 한 번만 연다 — 프레임마다 다시 열면 그 자체가 비용이다."""
+    from PIL import ImageFont
+
+    return ImageFont.truetype(path, size)
 
 
 def crop(rgb: np.ndarray, roi: tuple[int, int, int, int], *, margin: int = 0) -> np.ndarray:

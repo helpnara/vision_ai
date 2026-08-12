@@ -16,6 +16,7 @@ from vision_ai import (
     guide,
     labeling,
     monitoring,
+    playback,
     registry,
     scenario,
     serving,
@@ -443,6 +444,136 @@ def _run_inference(version: str, subset: pd.DataFrame, threshold: float | None) 
     if result.failed:
         st.warning(f"읽기 실패 {len(result.failed)}건은 제외했습니다.", icon="⚠️")
     st.rerun()
+
+
+# --- 판정 영상 (V7) -----------------------------------------------------------
+
+def _playback_tab() -> None:
+    st.markdown(
+        "테스트 영상을 걸어 **프레임마다 판정을 그려 넣은 영상**을 만든다. 재현율 0.82는 "
+        "다음에 무엇을 할지 알려주지 않지만, **어디서 놓치고 어디서 헛짚는지**는 알려준다."
+    )
+    st.caption("원본 영상은 그대로 둡니다. 판정본은 별도 폴더에 새 파일로 만듭니다.")
+
+    usable = serving.selectable_versions()
+    if not usable:
+        st.warning(
+            "추론에 쓸 수 있는 버전이 없습니다. 모델 파일이 함께 등록된 버전이 필요합니다.",
+            icon="📚",
+        )
+        st.page_link(guide.PAGE_MODELING, label="3단계 모델링으로 이동", icon="➡️")
+        return
+
+    source = ui.video_source("p4_play")
+
+    prod = registry.production()
+    default_index = (
+        usable.index(str(prod["version"]))
+        if prod is not None and str(prod["version"]) in usable else 0
+    )
+    col1, col2 = st.columns(2)
+    version = col1.selectbox("버전", usable, index=default_index, key="p4_play_version")
+    limit = col2.number_input(
+        "판정할 프레임 수", 10, 600, playback.DEFAULT_LIMIT, 10, key="p4_play_limit",
+        help="영상 전체에서 고르게 뽑습니다. 앞에서부터 자르면 뒷부분을 통째로 놓칩니다.",
+    )
+
+    row = registry.get(version)
+    kind = str(row.get("kind", "")) if row is not None else ""
+    if kind == "anomaly":
+        st.caption(
+            "이상탐지 모델이므로 **왼쪽에 판정 박스, 오른쪽에 열지도**를 나란히 그립니다. "
+            "박스만 보면 «왜 저기냐»를 알 수 없고, 열지도만 보면 «잡았다/놓쳤다»가 안 보입니다."
+        )
+    else:
+        st.caption(
+            "분류 모델은 결함의 **위치를 모릅니다.** 박스 대신 프레임마다 판정만 얹습니다. "
+            "위치까지 보려면 이상탐지 또는 검출 모델이 필요합니다."
+        )
+
+    if source is None:
+        return
+
+    # 이미 만들어 둔 판정본이 있으면 되찾아 온다. 화면을 새로 열 때마다 몇 분짜리 작업을
+    # 다시 시키면 아무도 두 번 쓰지 않는다.
+    result = playback.find(source, version)
+    label = "🎥 다시 만들기" if result is not None else "🎥 판정 영상 만들기"
+    if st.button(label, type="primary", key="p4_play_run"):
+        _render_playback(source, version, int(limit))
+        return
+    if result is None:
+        return
+
+    st.divider()
+    _show_playback(result)
+
+
+def _render_playback(source, version: str, limit: int) -> None:
+    try:
+        model = serving.load_version(version)
+    except (ValueError, FileNotFoundError) as exc:
+        st.error(f"모델 로드 실패: {exc}")
+        return
+
+    bar = st.progress(0.0, text="판정 중...")
+
+    def on_progress(done: int, total: int) -> None:
+        bar.progress(min(done / max(total, 1), 1.0), text=f"판정 중... {done:,}/{total:,}")
+
+    try:
+        result = playback.render(source, model, limit=limit, progress=on_progress)
+    except (OSError, RuntimeError) as exc:
+        bar.empty()
+        st.error(f"판정 영상을 만들지 못했습니다: {exc}")
+        return
+    bar.empty()
+
+    if not len(result):
+        st.error("판정한 프레임이 없습니다. 영상을 읽을 수 있는지 확인해 주세요.")
+        return
+    st.rerun()  # 만들어 둔 폴더에서 다시 읽어 그린다 — 화면을 새로 열어도 남아 있게
+
+
+def _show_playback(result) -> None:
+    """판정 영상이 위, 대표 판정 결과가 아래. 움직이는 것을 먼저 보고 멈춰서 확인한다."""
+    st.markdown(f"### ▶️ 판정 영상 — `{result.source_name}` / `{result.version}`")
+    if result.note():
+        st.warning(result.note(), icon="🎞️")
+    else:
+        st.video(result.video.read_bytes(), format=result.mime)
+    st.download_button(
+        "판정 영상 내려받기", result.video.read_bytes(),
+        file_name=result.video.name, mime=result.mime, key="p4_play_download",
+    )
+    st.caption(
+        f"{result.summary()} 원본 {result.scanned:,}프레임에서 고르게 뽑았고, "
+        f"재생 속도는 {result.fps:.1f}fps입니다."
+    )
+
+    st.markdown("### 대표 판정 결과")
+    highlights = result.highlights()
+    if not highlights:
+        st.info("보여 줄 장면이 없습니다.")
+    elif not result.defects:
+        st.info(
+            "결함으로 판정된 프레임이 없습니다. 아래는 **기준선에 가장 가까웠던** 장면입니다 — "
+            "여기까지 갔는데 못 넘었다는 뜻이므로 임계값을 조정할지 판단할 근거가 됩니다.",
+            icon="🔍",
+        )
+    stills = {int(p.stem): p for p in result.stills}
+    for judged in highlights:
+        picture = stills.get(judged.index)
+        if picture is not None:
+            st.image(str(picture), caption=judged.caption(), width="stretch")
+
+    with st.expander("프레임별 판정 표"):
+        st.dataframe(result.frame(), hide_index=True, width="stretch", height=280)
+        st.download_button(
+            "판정 결과 내려받기",
+            result.frame().to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"playback_{result.version or 'model'}.csv", mime="text/csv",
+        )
+    st.caption(f"판정본 위치: `{result.directory}`")
 
 
 # --- 3) 드리프트 감시 ---------------------------------------------------------
@@ -965,8 +1096,8 @@ def render() -> None:
 
     df = _resolved()
     tabs = st.tabs(
-        ["🎬 운영 시나리오 시연", "📚 모델 레지스트리", "▶️ 배치 추론", "📉 드리프트 감시",
-         "📈 성능 추이", "🔁 재학습 판단", "🔍 판정 이력"]
+        ["🎬 운영 시나리오 시연", "📚 모델 레지스트리", "▶️ 배치 추론", "🎥 판정 영상",
+         "📉 드리프트 감시", "📈 성능 추이", "🔁 재학습 판단", "🔍 판정 이력"]
     )
     with tabs[0]:
         _scenario_tab(df)
@@ -975,12 +1106,14 @@ def render() -> None:
     with tabs[2]:
         _inference_tab(df)
     with tabs[3]:
-        _drift_tab(df)
+        _playback_tab()
     with tabs[4]:
-        _performance_tab(df)
+        _drift_tab(df)
     with tabs[5]:
-        _retraining_tab(df)
+        _performance_tab(df)
     with tabs[6]:
+        _retraining_tab(df)
+    with tabs[7]:
         _trace_tab(df)
 
 

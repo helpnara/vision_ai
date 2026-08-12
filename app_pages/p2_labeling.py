@@ -297,17 +297,55 @@ def _with_boxes(rgb, drawn):
 def _roi_canvas(row: pd.Series, rgb, drawn) -> None:
     """이미지 위에서 드래그로 영역을 지정하는 화면. 왼쪽 칸에 그린다."""
     height, width = rgb.shape[:2]
-    ui.roi_picker(
-        _with_boxes(rgb, drawn),
-        key=_roi_key(str(row["image_id"])),
-        width=width,
-        height=height,
-    )
+    key = _roi_key(str(row["image_id"]))
+    ui.roi_picker(_with_boxes(rgb, drawn), key=key, width=width, height=height)
+
+    view = ui.viewport(key, width, height)
     st.caption(
         f"{row['category']} · {row['image_id']} · {width}×{height} — "
         "**드래그해 영역을 지정**하고, 지정한 영역 **안쪽을 끌면 위치를 옮길 수 있습니다.** "
         "여러 개면 하나씩 그려 **＋ 박스 추가**를 누르세요."
     )
+    _zoom_controls(key, rgb, drawn, view)
+
+
+def _zoom_controls(key: str, rgb, drawn, view) -> None:
+    """작은 결함을 위한 확대 (G16).
+
+    VisA PCB 결함은 이미지의 **0.57%** 다. 1404px 이미지를 640px로 줄여 그리면 결함이
+    화면에서 몇 픽셀에 불과해 **보이지도, 그려지지도** 않는다. 그런데 검출 모델 학습은
+    박스가 얼마나 정확한지에 곧바로 좌우된다.
+
+    **조작은 늘리지 않는다** — 이미 배운 드래그를 그대로 쓴다. 대충 끌고 확대를 누르면
+    그 둘레로 확대되고, 그 안에서 정밀하게 다시 그린다.
+    """
+    height, width = rgb.shape[:2]
+    zoomed = (view[2], view[3]) != (width, height)
+    pending = ui.roi_box(key, width, height)
+
+    left, middle, right = st.columns([2, 2, 3])
+    if left.button(
+        "🔍 지정한 영역으로 확대", key=f"p2_zoomin::{key}", width="stretch",
+        disabled=pending is None,
+        help="대충 끌어 놓고 이 버튼을 누르면 그 둘레로 확대됩니다. 그 안에서 다시 그리세요.",
+    ):
+        ui.zoom_to(key, pending, width, height)
+        st.rerun()
+
+    if middle.button(
+        "🖼️ 전체 보기", key=f"p2_zoomout::{key}", width="stretch", disabled=not zoomed
+    ):
+        ui.reset_zoom(key)
+        st.rerun()
+
+    note = ui.zoom_note(view)
+    if zoomed:
+        right.caption(f"확대 중 — {note} · 보는 범위 {view[2]}×{view[3]}")
+    else:
+        right.caption(
+            f"{note} — 이보다 작은 결함은 확대해야 그릴 수 있습니다."
+            if view[2] > ui.ROI_DISPLAY_WIDTH else note
+        )
 
 
 # --- 폴더 라벨 검증 --------------------------------------------------------

@@ -446,6 +446,122 @@ def test_transport_image_is_shrunk():
     assert ui._data_uri(small)  # 상한보다 작으면 그대로
 
 
+# --- 작은 결함을 위한 확대 (G16) --------------------------------------------
+
+W, H = 1404, 1070          # 실제 VisA PCB 이미지 크기
+
+
+def test_nothing_is_zoomed_until_asked():
+    st.session_state.clear()
+    assert ui.viewport("roi", W, H) == (0, 0, W, H)
+
+
+def test_zooming_puts_the_defect_in_the_middle():
+    """VisA PCB 결함은 이미지의 0.57%다. 640px로 줄여 그리면 보이지도 그려지지도 않는다."""
+    st.session_state.clear()
+    ui.zoom_to("roi", (700, 500, 60, 40), W, H)
+    x, y, w, h = ui.viewport("roi", W, H)
+    assert x < 730 < x + w and y < 520 < y + h
+    assert w < W / 2, "확대가 되어야 한다"
+
+
+def test_zooming_keeps_the_original_aspect_ratio():
+    """비율이 달라지면 사람이 보는 모양과 저장되는 좌표가 어긋나 보인다."""
+    st.session_state.clear()
+    ui.zoom_to("roi", (700, 500, 200, 10), W, H)
+    _, _, w, h = ui.viewport("roi", W, H)
+    assert w / h == pytest.approx(W / H, rel=0.02)
+
+
+def test_a_tiny_defect_does_not_zoom_past_the_floor():
+    """더 좁히면 손이 떨리는 것이 곧 좌표 오차가 된다. 그림도 뭉개져 더 부정확해진다."""
+    st.session_state.clear()
+    ui.zoom_to("roi", (700, 500, 2, 2), W, H)
+    assert ui.viewport("roi", W, H)[2] >= ui.ZOOM_MIN_PX
+
+
+def test_zooming_leaves_room_around_the_defect():
+    """딱 맞게 자르면 결함의 가장자리가 화면 끝에 붙어 경계가 보이지 않는다."""
+    st.session_state.clear()
+    box = (700, 500, 100, 80)
+    ui.zoom_to("roi", box, W, H)
+    x, y, w, h = ui.viewport("roi", W, H)
+    assert x < box[0] and y < box[1]
+    assert x + w > box[0] + box[2] and y + h > box[1] + box[3]
+
+
+def test_a_defect_at_the_edge_stays_inside_the_image():
+    """가장자리 결함을 확대하면서 이미지 밖을 보게 되면 좌표가 음수가 된다."""
+    st.session_state.clear()
+    ui.zoom_to("roi", (0, 0, 40, 40), W, H)
+    x, y, w, h = ui.viewport("roi", W, H)
+    assert x >= 0 and y >= 0 and x + w <= W and y + h <= H
+
+
+def test_zoom_never_grows_past_the_whole_image():
+    st.session_state.clear()
+    ui.zoom_to("roi", (0, 0, W, H), W, H)
+    assert ui.viewport("roi", W, H) == (0, 0, W, H)
+
+
+def test_going_back_to_the_whole_image():
+    st.session_state.clear()
+    ui.zoom_to("roi", (700, 500, 60, 40), W, H)
+    ui.reset_zoom("roi")
+    assert ui.viewport("roi", W, H) == (0, 0, W, H)
+
+
+def test_a_stale_zoom_is_clipped_to_the_new_image():
+    """다음 이미지가 더 작을 수 있다. 저장된 범위를 그대로 쓰면 밖을 본다."""
+    st.session_state.clear()
+    st.session_state[ui.zoom_key("roi")] = (1200, 900, 200, 150)
+    x, y, w, h = ui.viewport("roi", 400, 300)
+    assert (x, y, w, h) == (200, 150, 200, 150)
+
+
+def test_each_image_zooms_on_its_own():
+    """앞 이미지에서 확대해 둔 범위가 다음 이미지에 그대로 적용되면 엉뚱한 곳을 본다."""
+    st.session_state.clear()
+    ui.zoom_to("roi::a", (700, 500, 60, 40), W, H)
+    assert ui.viewport("roi::b", W, H) == (0, 0, W, H)
+
+
+def test_the_note_says_the_smallest_step_you_can_draw():
+    """1404px를 640px로 줄여 그리면 2.2px 단위로만 지정되는데 화면만 봐서는 모른다."""
+    assert "2.19px" in ui.zoom_note((0, 0, W, H))
+    assert "1.0×" in ui.zoom_note((0, 0, ui.ROI_DISPLAY_WIDTH, 480))
+
+
+def test_zooming_makes_the_step_smaller():
+    coarse = ui.zoom_note((0, 0, W, H))
+    fine = ui.zoom_note((700, 500, 140, 107))
+    assert float(coarse.split("원본 ")[1].rstrip("px")) > float(fine.split("원본 ")[1].rstrip("px"))
+
+
+def _zoomed_picker():
+    import numpy as np
+
+    from vision_ai import ui
+
+    width, height = 1404, 1070
+    ui.zoom_to("z", (700, 500, 60, 40), width, height)
+    ui.roi_picker(np.zeros((height, width, 3), np.uint8), key="z", width=width, height=height)
+
+
+def test_the_axis_follows_the_zoom_so_coordinates_stay_original():
+    """확대해도 좌표는 원본 기준이어야 한다 — 축 도메인이 그 일을 대신 한다.
+
+    되짚는 계산을 따로 두면 확대 배율이 바뀔 때마다 어긋날 자리가 하나 늘어난다.
+    """
+    at = AppTest.from_function(_zoomed_picker)
+    at.run()
+    assert not at.exception
+    spec = json.loads(at.get("vega_lite_chart")[0].proto.spec)
+    domain = spec["layer"][1]["encoding"]["x"]["scale"]["domain"]
+    assert domain[0] > 0 and domain[1] < W, "확대된 범위가 축에 반영되어야 한다"
+    assert domain[0] < 700 < domain[1]
+
+
 # --- 타임라인에서 구간 지정 (H4) --------------------------------------------
 
 def _span(xs):

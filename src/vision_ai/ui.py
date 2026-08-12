@@ -369,6 +369,90 @@ def _data_uri(rgb, *, max_width: int = ROI_TRANSPORT_WIDTH) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
+# --- 작은 결함을 위한 확대 (G16) --------------------------------------------
+
+ZOOM_MIN_PX = 48
+"""더 이상 좁힐 수 없는 확대 범위(원본 픽셀).
+
+이보다 좁히면 화면 1px이 원본 0.07px가 되어 **손이 떨리는 것이 곧 좌표 오차**가 된다.
+그림도 뭉개져서 정밀해 보이기만 하고 실제로는 더 부정확해진다.
+"""
+
+ZOOM_MARGIN = 0.6
+"""확대할 때 지정한 영역 둘레에 남기는 여유(비율).
+
+딱 맞게 자르면 결함의 **가장자리가 화면 끝에 붙어** 어디까지가 결함인지 보이지 않는다.
+경계를 정하는 것이 박스를 그리는 일의 전부인데 그 경계가 안 보이면 곤란하다.
+"""
+
+
+def zoom_key(key: str) -> str:
+    return f"{key}__zoom"
+
+
+def viewport(key: str, width: int, height: int) -> tuple[int, int, int, int]:
+    """지금 화면이 보고 있는 원본 범위 (x, y, w, h). 확대 전이면 이미지 전체.
+
+    이미지가 바뀌면 저장된 범위가 밖으로 나갈 수 있으므로 항상 잘라 맞춘다.
+    """
+    saved = st.session_state.get(zoom_key(key))
+    if not saved:
+        return (0, 0, width, height)
+    x, y, w, h = (int(value) for value in saved)
+    w, h = max(1, min(w, width)), max(1, min(h, height))
+    x, y = max(0, min(x, width - w)), max(0, min(y, height - h))
+    return (x, y, w, h)
+
+
+def zoom_to(
+    key: str,
+    box: tuple[int, int, int, int],
+    width: int,
+    height: int,
+    *,
+    margin: float = ZOOM_MARGIN,
+) -> None:
+    """지정한 영역 둘레로 확대한다. 화면 비율은 원본과 같게 유지한다.
+
+    비율을 안 맞추면 확대할 때마다 그림이 늘어나거나 눌려서, 사람이 보는 모양과 저장되는
+    좌표가 어긋나 보인다.
+    """
+    x, y, w, h = box
+    pad_x, pad_y = w * margin, h * margin
+    x0, y0 = x - pad_x, y - pad_y
+    x1, y1 = x + w + pad_x, y + h + pad_y
+
+    # 원본 비율에 맞춰 모자란 쪽을 넓힌다 (좁히면 지정한 영역이 잘려 나간다)
+    view_w, view_h = x1 - x0, y1 - y0
+    if view_w / view_h < width / height:
+        view_w = view_h * width / height
+    else:
+        view_h = view_w * height / width
+
+    view_w = max(ZOOM_MIN_PX, min(view_w, width))
+    view_h = max(ZOOM_MIN_PX * height / max(width, 1), min(view_h, height))
+
+    centre_x, centre_y = (x0 + x1) / 2, (y0 + y1) / 2
+    left = max(0, min(round(centre_x - view_w / 2), width - round(view_w)))
+    top = max(0, min(round(centre_y - view_h / 2), height - round(view_h)))
+    st.session_state[zoom_key(key)] = (left, top, round(view_w), round(view_h))
+
+
+def reset_zoom(key: str) -> None:
+    st.session_state.pop(zoom_key(key), None)
+
+
+def zoom_note(view: tuple[int, int, int, int], display_width: int = ROI_DISPLAY_WIDTH) -> str:
+    """"화면 1px이 원본 몇 px인가"를 말해 준다.
+
+    이 값이 곧 **그릴 수 있는 가장 작은 눈금**이다. 1404px 이미지를 640px로 줄여 그리면
+    2.2px 단위로만 지정되는데, 화면만 봐서는 그 사실을 알 수가 없다.
+    """
+    per_pixel = view[2] / max(display_width, 1)
+    magnification = display_width / max(view[2], 1)
+    return f"{magnification:.1f}× · 화면 1px = 원본 {per_pixel:.2f}px"
+
+
 def roi_box(key: str, width: int, height: int) -> tuple[int, int, int, int] | None:
     """드래그로 지정된 영역을 (x, y, w, h) 정수로 읽는다. 없으면 None.
 
@@ -413,24 +497,38 @@ def roi_picker(
     화면 크기와 무관하게 **좌표는 원본 픽셀 기준**으로 나온다. 축 도메인을 원본 크기로
     두고 그림만 줄여 그리기 때문이다.
 
+    확대(G16)도 같은 성질로 공짜로 얻는다 — 그림을 잘라 그리고 **축 도메인을 그 범위로
+    바꾸면** 좌표는 여전히 원본 기준으로 돌아온다. 되짚는 계산이 따로 필요 없다.
+
     결과는 ``roi_box(key, width, height)``로 읽는다.
     """
-    uri = _data_uri(rgb)
+    import numpy as np
+
+    view_x, view_y, view_w, view_h = viewport(key, width, height)
+    array = np.asarray(rgb)[view_y:view_y + view_h, view_x:view_x + view_w]
+
+    uri = _data_uri(array)
     if not uri:
         st.error("이미지를 화면용으로 변환하지 못했습니다.")
         return
 
-    display_height = max(1, round(display_width * height / max(width, 1)))
+    display_height = max(1, round(display_width * view_h / max(view_w, 1)))
     axes = {
-        "x": {"field": "x", "type": "quantitative", "scale": {"domain": [0, width]}, "axis": None},
-        "y": {"field": "y", "type": "quantitative", "scale": {"domain": [height, 0]}, "axis": None},
+        "x": {
+            "field": "x", "type": "quantitative",
+            "scale": {"domain": [view_x, view_x + view_w]}, "axis": None,
+        },
+        "y": {
+            "field": "y", "type": "quantitative",
+            "scale": {"domain": [view_y + view_h, view_y]}, "axis": None,
+        },
     }
     spec = {
         "width": display_width,
         "height": display_height,
         "layer": [
             {
-                "data": {"values": [{"x": 0, "y": 0, "url": uri}]},
+                "data": {"values": [{"x": view_x, "y": view_y, "url": uri}]},
                 "mark": {
                     "type": "image", "width": display_width, "height": display_height,
                     "align": "left", "baseline": "top",
@@ -439,7 +537,7 @@ def roi_picker(
             },
             {
                 # 선택을 붙일 자리만 필요하다. 보이지 않는 점 하나로 충분하다.
-                "data": {"values": [{"x": 0, "y": 0}]},
+                "data": {"values": [{"x": view_x, "y": view_y}]},
                 "mark": {"type": "point", "opacity": 0},
                 "encoding": axes,
                 "params": [

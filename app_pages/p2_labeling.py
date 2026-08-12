@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from vision_ai import boxes as box_store
-from vision_ai import config, guide, labeling, storage, ui, viz
+from vision_ai import config, detection, guide, labeling, storage, ui, viz
 
 # 라벨을 기록하면 큐에서 빠지는 모드 (커서를 그대로 두면 다음 항목이 올라온다)
 _DRAINING_MODES = frozenset({"unlabeled", "unspecified", "unmapped"})
@@ -587,6 +587,74 @@ def _box_export(resolved: pd.DataFrame) -> None:
             f"YOLO 내보내기에서 {info['images'] - len(texts):,}장이 빠졌습니다 — "
             "manifest에 폭·높이가 없어 정규화할 수 없습니다."
         )
+
+    _detection_export(resolved, frame)
+
+
+def _detection_export(resolved: pd.DataFrame, frame: pd.DataFrame) -> None:
+    """검출 모델 학습 폴더를 만든다.
+
+    내려받기 버튼과 달리 **디스크에 폴더를 만든다.** 학습에 쓰는 것은 라벨 몇 KB가 아니라
+    이미지 수천 장이라 브라우저로 내려받을 물건이 아니다. 학습은 GPU가 있는 기계에서
+    `scripts/train_detector.py`로 돌린다.
+    """
+    st.markdown("**지도학습 검출 모델 준비**")
+    state = detection.readiness(resolved, frame)
+    st.caption(
+        "지금 모델(이상탐지)은 '정상과 얼마나 다른가'를 잽니다. "
+        "**'스크래치 2개와 찍힘 1개'처럼 무엇이 몇 개인지**를 알려면 박스로 학습하는 "
+        "검출 모델이 필요하고, 그건 GPU가 있는 기계에서 돌립니다."
+    )
+
+    if not state["ready"]:
+        reasons = []
+        if state["images_with_boxes"] < 50:
+            reasons.append(
+                f"박스가 있는 이미지가 {state['images_with_boxes']:,}장입니다 — "
+                "검출 모델은 이 정도로 학습되지 않습니다(자릿수로 수백 장 이상)."
+            )
+        if not state["splits_assigned"]:
+            reasons.append("분할이 배정되지 않았습니다 — **데이터 분할** 탭을 먼저 실행하세요.")
+        st.info(" ".join(reasons) or "아직 준비되지 않았습니다.", icon="🧪")
+
+    if state["thin_classes"]:
+        st.caption(
+            "박스가 50개 미만인 클래스: " + ", ".join(state["thin_classes"])
+            + " — 이 클래스는 거의 학습되지 않습니다."
+        )
+
+    left, right = st.columns([1, 2])
+    copy_images = right.checkbox(
+        "이미지를 복사 (링크 대신)", value=False, key="p2_det_copy",
+        help="기본은 심볼릭 링크라 용량을 두 배로 쓰지 않습니다. 폴더째 다른 기계로 "
+             "옮겨 학습할 생각이면 복사해야 링크가 끊기지 않습니다.",
+    )
+    if not left.button("📦 검출 학습 폴더 내보내기", key="p2_det_export"):
+        return
+
+    with st.spinner("학습 폴더를 만드는 중..."):
+        try:
+            result = detection.export_yolo(
+                resolved=resolved, frame=frame, copy_images=copy_images
+            )
+        except OSError as exc:
+            st.error(f"내보내기 실패: {exc}")
+            return
+
+    blocking = result.blocking_note()
+    if blocking:
+        st.error(f"{result.as_message()}\n\n{blocking}", icon="🚫")
+    else:
+        st.success(result.as_message(), icon="✅")
+    for note in result.skipped_notes():
+        st.caption(note)
+    if blocking:
+        return
+    st.code(
+        f"pip install ultralytics\n"
+        f"PYTHONPATH=src python scripts/train_detector.py --data {result.root / detection.DATA_FILE}",
+        language="bash",
+    )
 
 
 def _split_mode(resolved: pd.DataFrame) -> str:

@@ -361,7 +361,7 @@ def _video_tab() -> None:
     try:
         result, extracted = ingest.ingest_video(
             path, stride=plan.stride, category=category or "video",
-            similarity=video.DEFAULT_SIMILARITY if dedupe else None,
+            min_change=video.DEFAULT_MIN_CHANGE if dedupe else None,
             check_quality=check_quality, progress=progress.update,
         )
     except OSError as exc:
@@ -373,11 +373,38 @@ def _video_tab() -> None:
     st.success(f"{result.as_message()} · 그룹 `{extracted.video_id}`", icon="✅")
     if result.duplicates:
         st.caption(f"이미 등록된 프레임 {result.duplicates:,}건은 건너뛰었습니다.")
+    _warn_if_mostly_dropped(extracted, plan)
     if extracted.saved:
         st.markdown("**추출 표본**")
         for column, sample in zip(st.columns(4), extracted.saved[:4]):
             column.image(str(sample), width="stretch")
     st.info("다음 — **2단계 라벨링**에서 결함 구간과 위치를 지정합니다.", icon="➡️")
+
+
+MOSTLY_DROPPED = 0.8
+"""이 비율을 넘게 버렸으면 사용자에게 알린다. 잘 걸러진 것일 수도, 전멸한 것일 수도 있다."""
+
+
+def _warn_if_mostly_dropped(extracted, plan) -> None:
+    """대부분이 버려졌으면 그 사실을 말한다.
+
+    "N장 추출"만 찍고 넘어가면 40장을 기대했는데 3장이 나온 것을 **2단계에 가서야** 안다.
+    그때는 이미 추출 설정을 잊은 뒤다. 다만 이것이 꼭 오류는 아니다 — CCTV처럼 빈 장면이
+    대부분이면 많이 버려지는 게 정상이다. 그래서 막지 않고 판단 근거만 준다.
+    """
+    if extracted.scanned < 5 or extracted.drop_rate < MOSTLY_DROPPED:
+        return
+    st.warning(
+        f"후보 {extracted.scanned:,}장 중 **{extracted.drop_rate:.0%}를 버려** "
+        f"{extracted.kept:,}장만 남았습니다. 빈 장면이 대부분인 영상이면 정상입니다. "
+        "그게 아니라면 **거의 같은 프레임 버리기**를 끄고 다시 뽑아 보세요.",
+        icon="🧹",
+    )
+    if extracted.forced:
+        st.caption(
+            f"연속으로 너무 오래 버려서 {extracted.forced:,}장을 강제로 남겼습니다 — "
+            "이 표시가 보이면 중복 판정이 이 영상에 잘 안 맞는다는 뜻입니다."
+        )
 
 
 SOURCE_LIST = "목록에서 고르기"

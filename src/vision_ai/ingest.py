@@ -477,7 +477,7 @@ def ingest_video(
     *,
     stride: int,
     category: str,
-    similarity: float | None = None,
+    min_change: float | None = None,
     check_quality: bool = False,
     limit: int | None = None,
     progress: ProgressCallback | None = None,
@@ -493,7 +493,7 @@ def ingest_video(
     from . import video as video_module
 
     extracted = video_module.extract(
-        path, stride=stride, similarity=similarity,
+        path, stride=stride, min_change=min_change,
         check_quality=check_quality, limit=limit, progress=progress,
     )
 

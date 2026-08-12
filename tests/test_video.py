@@ -111,42 +111,94 @@ def test_plans_refuse_nonsense_input(clip):
 def test_extract_saves_roughly_the_planned_number(clip, tmp_path):
     info = video.probe(clip)
     plan = video.plan_from_rate(info, per_second=5)
-    result = video.extract(clip, stride=plan.stride, out_dir=tmp_path / "out", similarity=None)
+    result = video.extract(clip, stride=plan.stride, out_dir=tmp_path / "out", min_change=None)
 
     assert result.kept == plan.expected_frames
     assert all(path.exists() for path in result.saved)
 
 
 def test_extracted_files_are_named_by_frame_number(clip, tmp_path):
-    result = video.extract(clip, stride=30, out_dir=tmp_path / "out", similarity=None)
+    result = video.extract(clip, stride=30, out_dir=tmp_path / "out", min_change=None)
     names = [path.stem for path in result.saved]
     assert names == sorted(names), "프레임 순서대로 정렬되는 이름이어야 한다"
 
 
 def test_near_identical_frames_are_dropped(still, tmp_path):
     """정지 구간에서는 같은 그림이 쏟아진다. 균등 추출만으로는 거를 수 없다."""
-    kept_all = video.extract(still, stride=2, out_dir=tmp_path / "a", similarity=None)
-    deduped = video.extract(still, stride=2, out_dir=tmp_path / "b", similarity=0.02)
+    kept_all = video.extract(still, stride=2, out_dir=tmp_path / "a", min_change=None)
+    deduped = video.extract(still, stride=2, out_dir=tmp_path / "b", min_change=video.DEFAULT_MIN_CHANGE)
 
     assert kept_all.kept > 1
-    assert deduped.kept == 1, "움직임이 없으면 한 장이면 충분하다"
-    assert deduped.dropped_similar == kept_all.kept - 1
+    assert deduped.kept < kept_all.kept / 5, "정지 화면은 거의 다 버려야 한다"
+
+
+def test_a_frozen_scene_still_leaves_a_trail(still, tmp_path):
+    """**조용한 전멸을 막는 바닥.** 어떤 지표도 모든 장면에서 맞을 수는 없는데, 어긋났을
+    때의 결과가 '20초 영상에서 1장'이면 나중에야 알게 된다. 후보 20장에 1장은 남는다."""
+    result = video.extract(
+        still, stride=2, out_dir=tmp_path / "out",
+        min_change=video.DEFAULT_MIN_CHANGE, max_consecutive_drops=10,
+    )
+    assert result.forced >= 1
+    assert result.kept >= result.scanned // 10
+
+
+def test_the_floor_can_be_turned_off_with_a_high_limit(still, tmp_path):
+    """바닥이 필요 없을 만큼 확신이 있으면 끌 수 있어야 한다."""
+    result = video.extract(
+        still, stride=2, out_dir=tmp_path / "out",
+        min_change=video.DEFAULT_MIN_CHANGE, max_consecutive_drops=10_000,
+    )
+    assert result.kept == 1 and result.forced == 0
+
+
+def test_drop_rate_says_how_much_was_thrown_away(still, tmp_path):
+    """이 값이 높으면 지표가 이 장면에 안 맞는 것이다 — 화면이 경고할 근거가 된다."""
+    result = video.extract(
+        still, stride=2, out_dir=tmp_path / "out", min_change=video.DEFAULT_MIN_CHANGE
+    )
+    assert result.drop_rate > 0.8
+
+
+def test_a_moving_object_registers_no_matter_how_small_it_looks():
+    """**평균 절대차를 버린 이유.** 같은 움직임인데 물체가 작다는 이유만으로 값이 4배
+    작아져, 0.02라는 한 값이 어떤 장면에서는 전부 남기고 어떤 장면에서는 전멸시켰다."""
+    still_thumb = np.full((video.THUMB, video.THUMB), 0.3, np.float32)
+
+    ratios, means = [], []
+    for size in (12, 6, 2):        # 물체가 화면에서 차지하는 크기를 줄여 간다
+        moved = still_thumb.copy()
+        moved[10:10 + size, 10:10 + size] = 0.8
+        ratios.append(video.changed_ratio(moved, still_thumb))
+        means.append(float(np.abs(moved - still_thumb).mean()))
+
+    assert min(means) < max(means) / 20, "평균은 물체 크기에 따라 통째로 흔들린다"
+    assert min(ratios) > 0, "바뀐 칸 비율은 작은 물체에도 0이 아니다"
+    assert video.changed_ratio(still_thumb, still_thumb) == 0.0
+
+
+def test_sensor_noise_alone_is_not_a_change():
+    """잡음에 반응하면 정지 구간에서도 전부 남아 중복 제거가 무의미해진다."""
+    rng = np.random.default_rng(0)
+    base = np.full((video.THUMB, video.THUMB), 0.3, np.float32)
+    noisy = base + rng.normal(0, 0.01, base.shape).astype(np.float32)
+    assert video.changed_ratio(noisy, base) < video.DEFAULT_MIN_CHANGE
 
 
 def test_moving_footage_survives_duplicate_removal(clip, tmp_path):
-    result = video.extract(clip, stride=6, out_dir=tmp_path / "out", similarity=0.005)
+    result = video.extract(clip, stride=6, out_dir=tmp_path / "out", min_change=video.DEFAULT_MIN_CHANGE)
     assert result.kept > 5, "움직이는 영상까지 걸러내면 안 된다"
 
 
 def test_limit_stops_early(clip, tmp_path):
-    result = video.extract(clip, stride=1, out_dir=tmp_path / "out", similarity=None, limit=4)
+    result = video.extract(clip, stride=1, out_dir=tmp_path / "out", min_change=None, limit=4)
     assert result.kept == 4
 
 
 def test_progress_reaches_the_end(clip, tmp_path):
     seen: list[tuple[int, int]] = []
     video.extract(
-        clip, stride=10, out_dir=tmp_path / "out", similarity=None,
+        clip, stride=10, out_dir=tmp_path / "out", min_change=None,
         progress=lambda done, total: seen.append((done, total)),
     )
     assert seen and seen[-1][0] == seen[-1][1]
@@ -154,7 +206,7 @@ def test_progress_reaches_the_end(clip, tmp_path):
 
 def test_result_message_explains_what_was_dropped(still, tmp_path):
     """버린 것을 조용히 넘기면 '3,000장이라더니 왜 2,700장이지?'가 된다."""
-    result = video.extract(still, stride=2, out_dir=tmp_path / "out", similarity=0.02)
+    result = video.extract(still, stride=2, out_dir=tmp_path / "out", min_change=video.DEFAULT_MIN_CHANGE)
     assert "제외" in result.as_message()
 
 
@@ -203,7 +255,7 @@ def test_sample_video_actually_moves(sandbox, tmp_path):
 
     made = video_module.make_sample(tmp_path / "sample.mp4", seconds=3)
     result = video_module.extract(
-        made, stride=5, out_dir=tmp_path / "out", similarity=video_module.DEFAULT_SIMILARITY
+        made, stride=5, out_dir=tmp_path / "out", min_change=video_module.DEFAULT_MIN_CHANGE
     )
     assert result.kept > 5
 
@@ -293,7 +345,7 @@ def test_seconds_follow_the_frame_rate():
 
 def test_extracted_frames_map_back_to_their_position(clip, tmp_path):
     """추출이 번호로 저장하므로 되짚기가 성립한다 — 둘이 어긋나면 구간 라벨이 엉킨다."""
-    result = video.extract(clip, stride=10, out_dir=tmp_path / "out", similarity=None)
+    result = video.extract(clip, stride=10, out_dir=tmp_path / "out", min_change=None)
     indexes = [video.frame_index(path) for path in result.saved]
     assert indexes == sorted(indexes)
     assert all(index % 10 == 0 for index in indexes)

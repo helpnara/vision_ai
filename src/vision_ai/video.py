@@ -14,7 +14,7 @@
 * **공정 값으로 계산** — 컨베이어처럼 라인 속도를 아는 경우. `plan_from_process()`
 * **초당 장수 지정** — 조건을 모르거나 감이 있는 경우. `plan_from_rate()`
 * **장면이 바뀔 때만** — CCTV처럼 물체가 멈춰 있기도 하고 속도도 제각각인 경우.
-  `extract(..., similarity=...)`
+  `extract(..., min_change=...)`
 
 CCTV가 주 입력이면 세 번째가 주가 된다. 고정 카메라 앞을 사람·차량이 불규칙하게 지나므로
 "물체가 화면을 지나는 시간"을 정할 수가 없다.
@@ -22,8 +22,12 @@ CCTV가 주 입력이면 세 번째가 주가 된다. 고정 카메라 앞을 �
 ## 왜 grab()과 retrieve()를 나눠 쓰는가
 
 건너뛸 프레임까지 디코딩하면 그만큼 그냥 버린다. `grab()`은 디코딩 없이 다음 프레임으로
-넘어가고, `retrieve()`가 실제로 디코딩한다. 720p 600프레임 실측에서 전부 디코딩 0.49초,
-건너뛰며 뽑기 0.20초였다.
+넘어가고, `retrieve()`가 실제로 디코딩한다.
+
+**같은 일을 하는 것끼리 재면 1.2~1.6배 이득이다**(720p 1.16배, 480p 1.6배). 설계 시점의
+"2.5배"는 디코딩만 하는 쪽과 디코딩+저장하는 쪽을 잘못 견준 값이었다. 해상도가 높을수록
+JPEG 인코딩 비중이 커져 이득이 준다. 그래도 손해 보는 경우가 없어 유지한다 —
+다만 **여기는 병목이 아니다**(720p 영상을 실시간의 27배로 처리한다).
 """
 
 from __future__ import annotations
@@ -43,11 +47,41 @@ VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".wmv", ".m4v", ".
 DEFAULT_FRAMES_PER_OBJECT = 3
 """물체 하나당 확보할 장수. 흔들림·가림에 대비한 여유까지 포함한 값."""
 
-DEFAULT_SIMILARITY = 0.02
-"""직전 채택 프레임과의 평균 절대 차이(0~1). 이보다 비슷하면 버린다.
+DEFAULT_MIN_CHANGE = 0.005
+"""직전 채택 프레임 대비 **눈에 띄게 바뀐 칸의 비율**. 이보다 적게 바뀌면 버린다.
 
 컨베이어가 멈춘 구간, CCTV의 빈 장면에서는 같은 그림이 쏟아진다. 균등 추출만으로는
 그것을 거를 수 없다.
+
+## 왜 '평균 절대 차이'가 아닌가
+
+처음에는 축소본의 평균 절대 차이를 썼다(기본 0.02). **물체가 화면에서 차지하는 크기에
+따라 값이 통째로 달라져서 못 쓴다.** 같은 움직임을 놓고 잰 값이다:
+
+| 장면 | 평균 절대차 | 바뀐 칸 비율 |
+|---|---|---|
+| 단색 배경 · 큰 물체 | 0.047 | 0.094 |
+| 무늬 배경 · 큰 물체 | 0.035 | 0.094 |
+| 무늬 배경 · 작은 물체(1080p) | **0.012** | 0.039 |
+| 완전 정지 | 0.000 | 0.000 |
+
+평균은 4배가 흔들려서 0.02라는 한 값이 어떤 장면에서는 전부 남기고 어떤 장면에서는
+**20초 영상에서 1장만 남긴다.** 실제로 그렇게 되고 있었다. CCTV는 물체가 화면에서
+작게 잡히는 쪽이라 피해가 큰 방향이다.
+
+'바뀐 칸 비율'은 정지(0.000)와 가장 불리한 움직임(0.039) 사이에 여유가 크다.
+값을 얼마로 두든 정지만 걸리고 움직임은 살아남는 구간이 넓다.
+"""
+
+CELL_DELTA = 0.05
+"""칸 하나가 '바뀌었다'고 볼 밝기 차이(0~1). 센서 잡음이 이 선을 넘지 못하게 하는 값."""
+
+MAX_CONSECUTIVE_DROPS = 20
+"""아무리 비슷해도 이만큼 연속으로 버렸으면 한 장은 남긴다.
+
+**어떤 지표도 모든 장면에서 맞을 수는 없다.** 중복 제거는 편의이지 정확성 요건이 아닌데,
+어긋났을 때의 결과가 '20초 영상에서 1장'처럼 조용한 전멸이면 곤란하다. 최악이어도
+후보 20장에 1장은 남는다는 바닥을 깔아 둔다.
 """
 
 THUMB = 32
@@ -236,10 +270,16 @@ class ExtractResult:
     scanned: int = 0
     dropped_similar: int = 0
     dropped_quality: int = 0
+    forced: int = 0          # 연속으로 너무 많이 버려서 강제로 남긴 장수
 
     @property
     def kept(self) -> int:
         return len(self.saved)
+
+    @property
+    def drop_rate(self) -> float:
+        """훑은 후보 중 버린 비율. 이 값이 높으면 지표가 이 장면에 안 맞는 것이다."""
+        return (self.dropped_similar + self.dropped_quality) / max(self.scanned, 1)
 
     def as_message(self) -> str:
         parts = [f"{self.kept:,}장 추출"]
@@ -247,6 +287,8 @@ class ExtractResult:
             parts.append(f"직전과 거의 같아 {self.dropped_similar:,}장 제외")
         if self.dropped_quality:
             parts.append(f"흐리거나 노출이 나빠 {self.dropped_quality:,}장 제외")
+        if self.forced:
+            parts.append(f"너무 오래 버려서 {self.forced:,}장 강제 확보")
         return " · ".join(parts)
 
 
@@ -269,9 +311,10 @@ def extract(
     *,
     stride: int,
     out_dir: Path | None = None,
-    similarity: float | None = DEFAULT_SIMILARITY,
+    min_change: float | None = DEFAULT_MIN_CHANGE,
     check_quality: bool = False,
     limit: int | None = None,
+    max_consecutive_drops: int = MAX_CONSECUTIVE_DROPS,
     progress: ProgressCallback | None = None,
 ) -> ExtractResult:
     """영상에서 프레임을 뽑아 이미지 파일로 저장한다.
@@ -279,7 +322,10 @@ def extract(
     Args:
         stride: 몇 프레임마다 한 장을 남길지.
         out_dir: 저장 폴더. 기본은 `raw/video/<video_id>/`.
-        similarity: 직전 채택 프레임과의 차이가 이보다 작으면 버린다. None이면 끈다.
+        min_change: 직전 채택 프레임 대비 바뀐 칸의 비율이 이보다 작으면 버린다.
+            None이면 중복 제거를 끈다.
+        max_consecutive_drops: 아무리 비슷해도 이만큼 연속으로 버렸으면 한 장은 남긴다.
+            어떤 지표도 모든 장면에서 맞을 수 없으므로 바닥을 깔아 둔다.
         check_quality: 흐림·노출 기준으로 거를지. **기본은 끈다** — 영상 프레임은 정지
             이미지보다 전반적으로 흐려서, 정지 이미지용 기준을 그대로 걸면 과하게 버린다.
             먼저 분포를 보고 사용자가 정하는 편이 낫다.
@@ -304,6 +350,7 @@ def extract(
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     result = ExtractResult(video_id=identifier)
     previous: np.ndarray | None = None
+    dropped_in_a_row = 0
     index = 0
 
     try:
@@ -314,7 +361,13 @@ def extract(
                 ok, frame = capture.retrieve()
                 if ok and frame is not None:
                     result.scanned += 1
-                    keep, previous = _decide(frame, previous, similarity, check_quality, result)
+                    keep, previous = _decide(frame, previous, min_change, check_quality, result)
+                    if not keep and dropped_in_a_row + 1 >= max_consecutive_drops:
+                        # 지표가 이 장면에 안 맞는 것이다. 조용히 전멸하느니 한 장 남긴다.
+                        keep, previous = True, _thumb(frame)
+                        result.dropped_similar -= 1
+                        result.forced += 1
+                    dropped_in_a_row = 0 if keep else dropped_in_a_row + 1
                     if keep:
                         target = out_dir / f"{index:08d}.jpg"
                         cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -332,11 +385,20 @@ def extract(
     return result
 
 
-def _decide(frame, previous, similarity, check_quality, result) -> tuple[bool, np.ndarray | None]:
+def changed_ratio(thumb, previous) -> float:
+    """두 축소본 사이에서 **눈에 띄게 바뀐 칸의 비율**.
+
+    평균이 아니라 개수를 세는 이유는 `DEFAULT_MIN_CHANGE`에 적어 두었다 — 평균은 물체가
+    화면에서 차지하는 크기에 따라 통째로 흔들린다.
+    """
+    return float((np.abs(thumb - previous) > CELL_DELTA).mean())
+
+
+def _decide(frame, previous, min_change, check_quality, result) -> tuple[bool, np.ndarray | None]:
     """이 프레임을 남길지 정하고, 다음 비교에 쓸 축소본을 돌려준다."""
     thumb = _thumb(frame)
-    if similarity is not None and previous is not None:
-        if float(np.abs(thumb - previous).mean()) < similarity:
+    if min_change is not None and previous is not None:
+        if changed_ratio(thumb, previous) < min_change:
             result.dropped_similar += 1
             return False, previous          # 버린 프레임은 기준으로 삼지 않는다
 
@@ -361,6 +423,9 @@ def make_sample(
     size: tuple[int, int] = (640, 480),
     with_defect: bool = True,
     seed: int = 7,
+    textured: bool = False,
+    noise: int = 8,
+    idle_seconds: float = 0.0,
 ) -> Path:
     """물체가 지나가는 시험용 영상을 만든다.
 
@@ -369,6 +434,14 @@ def make_sample(
     바로 돌려볼 수 있는 입력을 만들어 둔다.
 
     **성능 근거로 쓸 수 없다.** 배선과 조작을 확인하는 용도다.
+
+    `textured=True`는 **측정용**이다. 기본 영상은 단색 면이라 압축이 거의 공짜여서
+    디코딩 비용이 실제보다 훨씬 싸게 나온다. 고정 무늬(그레인)를 깔면 프레임당 정보량이
+    늘어 실제 촬영본에 가까운 비용이 된다 — 그래도 실제 촬영본을 대신하지는 못한다.
+
+    `idle_seconds`는 물체가 지나간 뒤 **아무것도 없는 장면**을 그만큼 유지한다. CCTV는
+    대부분의 시간이 이 빈 장면이고, 중복 제거의 값어치가 거기서 나온다. 이 구간이 없으면
+    중복 제거를 측정할 수가 없다.
     """
     import cv2
 
@@ -381,17 +454,31 @@ def make_sample(
         raise OSError("영상을 만들 수 없습니다 (코덱을 쓸 수 없음).")
 
     rng = np.random.default_rng(seed)
-    period = fps * 3                      # 3초에 하나씩 지나간다
+    moving = fps * 3                                  # 물체 하나가 지나가는 데 3초
+    idle = int(fps * max(idle_seconds, 0.0))          # 그 뒤 빈 장면
+    period = moving + idle
+    # 배경 무늬는 **한 번만** 만든다. 매 프레임 새로 뽑으면 배경이 통째로 바뀌어
+    # 프레임 간 차이가 사라지고, 중복 제거 측정이 무의미해진다.
+    grain = (
+        rng.integers(0, 60, (height, width, 3), dtype=np.uint8)
+        if textured else None
+    )
     try:
         for index in range(fps * seconds):
             frame = np.full((height, width, 3), 45, np.uint8)
+            if grain is not None:
+                frame = cv2.add(frame, grain)
             cv2.rectangle(frame, (0, height * 5 // 8), (width, height * 5 // 8 + 40), (70, 70, 70), -1)
-            x = int(((index % period) / period) * (width + 120)) - 120
-            top, bottom = height * 3 // 8, height * 5 // 8
-            cv2.rectangle(frame, (x, top), (x + 120, bottom), (150, 170, 190), -1)
-            if with_defect and (index // period) % 2 == 1:
-                cv2.line(frame, (x + 30, top + 30), (x + 90, bottom - 30), (40, 40, 40), 3)
-            writer.write(cv2.add(frame, rng.integers(0, 8, frame.shape, dtype=np.uint8)))
+            step = index % period
+            if step < moving:                          # 빈 장면에서는 아무것도 그리지 않는다
+                x = int((step / moving) * (width + 120)) - 120
+                top, bottom = height * 3 // 8, height * 5 // 8
+                cv2.rectangle(frame, (x, top), (x + 120, bottom), (150, 170, 190), -1)
+                if with_defect and (index // period) % 2 == 1:
+                    cv2.line(frame, (x + 30, top + 30), (x + 90, bottom - 30), (40, 40, 40), 3)
+            if noise > 0:
+                frame = cv2.add(frame, rng.integers(0, noise, frame.shape, dtype=np.uint8))
+            writer.write(frame)
     finally:
         writer.release()
     return path

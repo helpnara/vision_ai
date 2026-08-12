@@ -292,40 +292,14 @@ def _video_tab() -> None:
             except OSError as exc:
                 st.error(str(exc))
             else:
-                st.session_state["video_path"] = str(made)
+                # 만든 영상이 곧바로 목록에서 골라진 상태가 되게 한다. 만들어 놓고 다시
+                # 찾아 고르게 하면 한 단계를 더 시키는 것이다.
+                st.session_state["video_source"] = SOURCE_LIST
+                st.session_state["video_pick"] = made
                 st.success(f"만들었습니다: `{made}`", icon="✅")
                 st.rerun()
 
-    source = st.radio(
-        "영상 지정 방식", ["파일 경로", "업로드"], horizontal=True, key="video_source",
-        help="큰 영상은 업로드 상한(200MB)에 걸리므로 로컬 실행 + 파일 경로가 편합니다.",
-    )
-
-    path: Path | None = None
-    if source == "파일 경로":
-        entered = st.text_input(
-            "영상 파일 경로", key="video_path", placeholder="/home/user/videos/line1.mp4"
-        )
-        if entered:
-            candidate = Path(entered).expanduser()
-            if not candidate.is_file():
-                st.error(f"파일을 찾을 수 없습니다: `{candidate}`")
-            elif not video.is_video(candidate):
-                st.error(f"영상 파일이 아닙니다: `{candidate.suffix}`")
-            else:
-                path = candidate
-    else:
-        uploaded = st.file_uploader(
-            "영상 올리기", type=sorted(e.lstrip(".") for e in video.VIDEO_EXTENSIONS),
-            key="video_upload",
-        )
-        if uploaded is not None:
-            target = config.interim_dir() / "video" / uploaded.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(uploaded.getvalue())
-            path = target
-            st.caption(f"저장 위치: `{target}`")
-
+    path = _video_source()
     if path is None:
         return
 
@@ -404,6 +378,95 @@ def _video_tab() -> None:
         for column, sample in zip(st.columns(4), extracted.saved[:4]):
             column.image(str(sample), width="stretch")
     st.info("다음 — **2단계 라벨링**에서 결함 구간과 위치를 지정합니다.", icon="➡️")
+
+
+SOURCE_LIST = "목록에서 고르기"
+SOURCE_UPLOAD = "올리기"
+SOURCE_PATH = "경로 직접 입력"
+
+
+def _describe(path: Path) -> str:
+    """목록에 보일 이름. 크기를 붙여야 같은 이름의 다른 영상을 구분할 수 있다.
+
+    영상마다 열어서 길이를 재면 목록을 그릴 때마다 파일을 전부 여는 셈이 되므로 크기만
+    쓴다. MB로만 적으면 작은 영상이 전부 `0MB`가 되어 구분이 되지 않는다.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return path.name
+    if size >= 1_048_576:
+        return f"{path.name} · {size / 1_048_576:,.1f}MB"
+    return f"{path.name} · {max(size // 1024, 1):,}KB"
+
+
+def _video_source() -> Path | None:
+    """쓸 영상을 정한다.
+
+    예전에는 파일 경로를 통째로 타이핑해야 했다. 오타 하나로 실패하고, 무엇보다 **어떤
+    영상이 이미 올라와 있는지 화면에서 알 수가 없었다.** 목록을 기본으로 두고, 목록에
+    없는 영상만 올리거나 경로로 지정한다.
+    """
+    scan_extra = st.session_state.get("video_scan_dir", "").strip()
+    found = video.listed(*( [scan_extra] if scan_extra else [] ))
+
+    options = [SOURCE_LIST, SOURCE_UPLOAD, SOURCE_PATH]
+    source = st.radio(
+        "영상 지정 방식", options,
+        index=0 if found else 1,
+        horizontal=True, key="video_source",
+        help="큰 영상은 올리기 상한(200MB)에 걸립니다. 로컬 실행이면 폴더를 훑는 편이 낫습니다.",
+    )
+
+    if source == SOURCE_LIST:
+        picked = None
+        if not found:
+            st.info(
+                f"`{video.video_dir()}`에 영상이 없습니다. **올리기**로 넣거나, 아래에 "
+                "영상이 있는 폴더를 적어 훑으세요.",
+                icon="📂",
+            )
+        else:
+            picked = st.selectbox(
+                "영상", found, format_func=_describe, key="video_pick",
+                help=f"{video.video_dir()} 및 아래에 적은 폴더를 훑은 결과입니다.",
+            )
+            st.caption(f"경로: `{picked}`")
+        st.text_input(
+            "다른 폴더도 훑기 (선택)", key="video_scan_dir",
+            placeholder="/mnt/nas/line1-cctv",
+            help="하위 폴더까지 내려갑니다. 영상이 프로젝트 밖에 있는 경우가 오히려 보통입니다.",
+        )
+        if scan_extra and not Path(scan_extra).expanduser().is_dir():
+            st.warning(f"폴더를 찾을 수 없습니다: `{scan_extra}`", icon="📁")
+        return picked
+
+    if source == SOURCE_UPLOAD:
+        uploaded = st.file_uploader(
+            "영상 올리기", type=sorted(e.lstrip(".") for e in video.VIDEO_EXTENSIONS),
+            key="video_upload",
+        )
+        if uploaded is None:
+            return None
+        target = video.video_dir() / uploaded.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(uploaded.getvalue())
+        st.caption(f"저장 위치: `{target}` — 다음부터는 **목록에서** 고를 수 있습니다.")
+        return target
+
+    entered = st.text_input(
+        "영상 파일 경로", key="video_path", placeholder="/home/user/videos/line1.mp4"
+    )
+    if not entered:
+        return None
+    candidate = Path(entered).expanduser()
+    if not candidate.is_file():
+        st.error(f"파일을 찾을 수 없습니다: `{candidate}`")
+        return None
+    if not video.is_video(candidate):
+        st.error(f"영상 파일이 아닙니다: `{candidate.suffix}`")
+        return None
+    return candidate
 
 
 def _extraction_plan(info: "video.VideoInfo"):

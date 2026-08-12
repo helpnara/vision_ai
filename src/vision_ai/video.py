@@ -81,6 +81,42 @@ def is_video(path) -> bool:
     return Path(path).suffix.lower() in VIDEO_EXTENSIONS
 
 
+VIDEO_DIR = "video"
+"""프로젝트 안에서 영상을 두는 폴더 이름 (`interim/video`)."""
+
+
+def video_dir() -> Path:
+    """올린 영상과 시험용 영상이 모이는 곳. 프로젝트마다 따로다."""
+    return config.interim_dir() / VIDEO_DIR
+
+
+def listed(*extra: Path | str, limit: int = 200) -> list[Path]:
+    """고를 수 있는 영상 목록.
+
+    **경로를 전부 타이핑하게 하면 안 된다.** 오타 하나로 실패하고, 무엇보다 어떤 영상이
+    이미 올라와 있는지 화면에서 알 수가 없다. 프로젝트의 영상 폴더를 훑어 목록으로 준다.
+
+    `extra`로 다른 폴더를 더 훑을 수 있다 — 로컬 실행에서는 영상이 프로젝트 밖(예:
+    NAS 마운트)에 있는 것이 오히려 보통이다. 하위 폴더까지 내려가되 `limit`에서 멈춘다.
+    """
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in [video_dir(), *(Path(item).expanduser() for item in extra)]:
+        if not root.is_dir():
+            continue
+        for item in sorted(root.rglob("*")):
+            if not item.is_file() or not is_video(item):
+                continue
+            key = item.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(item)
+            if len(found) >= limit:
+                return found
+    return found
+
+
 def probe(path) -> VideoInfo:
     """영상 메타데이터를 읽는다. 열 수 없으면 OSError."""
     import cv2

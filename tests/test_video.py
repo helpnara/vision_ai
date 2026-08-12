@@ -215,6 +215,64 @@ def test_sample_goes_into_the_project_by_default(sandbox):
     assert config.interim_dir() in made.parents
 
 
+# --- 고를 수 있는 영상 목록 --------------------------------------------------
+
+def _fake_video(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00" * 1024)
+    return path
+
+
+def test_the_project_video_folder_is_scanned_without_being_asked(sandbox):
+    """경로를 통째로 타이핑하게 하면 오타 하나로 실패하고, 무엇보다 어떤 영상이 이미
+    올라와 있는지 화면에서 알 수가 없다."""
+    _fake_video(video.video_dir() / "line1.mp4")
+    assert [p.name for p in video.listed()] == ["line1.mp4"]
+
+
+def test_files_that_are_not_videos_are_left_out(sandbox):
+    _fake_video(video.video_dir() / "line1.mp4")
+    _fake_video(video.video_dir() / "메모.txt")
+    assert [p.name for p in video.listed()] == ["line1.mp4"]
+
+
+def test_subfolders_are_scanned_too(sandbox):
+    """CCTV 녹화본은 날짜 폴더로 쌓이는 것이 보통이다."""
+    _fake_video(video.video_dir() / "2026-08-10" / "cam1.mp4")
+    assert [p.name for p in video.listed()] == ["cam1.mp4"]
+
+
+def test_extra_folders_can_be_scanned(sandbox, tmp_path):
+    """로컬 실행에서는 영상이 프로젝트 밖(NAS 등)에 있는 것이 오히려 보통이다."""
+    outside = _fake_video(tmp_path / "nas" / "cam9.mp4")
+    assert outside in video.listed(tmp_path / "nas")
+
+
+def test_the_same_video_is_not_listed_twice(sandbox):
+    """영상 폴더를 '다른 폴더'로 또 적으면 목록에 두 번 나온다."""
+    _fake_video(video.video_dir() / "line1.mp4")
+    assert len(video.listed(video.video_dir())) == 1
+
+
+def test_a_missing_folder_is_not_an_error(sandbox):
+    """오타 난 폴더 때문에 화면이 죽으면 안 된다 — 목록만 비면 된다."""
+    assert video.listed("/없는/폴더") == []
+
+
+def test_the_listing_stops_at_the_limit(sandbox):
+    """녹화본이 수천 개인 폴더를 통째로 selectbox에 넣으면 화면이 멈춘다."""
+    for index in range(12):
+        _fake_video(video.video_dir() / f"cam{index:02d}.mp4")
+    assert len(video.listed(limit=5)) == 5
+
+
+def test_the_video_folder_is_inside_the_project(sandbox):
+    """프로젝트를 나눈 이유가 데이터를 섞지 않기 위해서다. 영상도 같다."""
+    from vision_ai import config
+
+    assert config.data_root() in video.video_dir().parents
+
+
 # --- 프레임 되짚기 (H4 구간 라벨링의 토대) -----------------------------------
 
 def test_frame_number_is_recoverable_from_the_file_name():

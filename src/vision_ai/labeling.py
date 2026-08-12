@@ -321,6 +321,22 @@ def video_frames(resolved: pd.DataFrame) -> pd.DataFrame:
     return frames.dropna(subset=["frame_index"]).sort_values("frame_index")
 
 
+def even_sample(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
+    """표를 **처음부터 끝까지 고르게** 훑어 `limit`개만 남긴다.
+
+    영상 하나를 평가할 때 앞에서부터 자르면 **앞부분만 잰 것**이 된다. 10분 영상의 앞
+    200장은 앞 2분이고, 조명이 바뀌거나 물건이 달라지는 뒷부분은 통째로 빠진다. 그런데
+    그 사실이 지표에는 드러나지 않는다 — 그냥 "재현율 0.9"로 보인다.
+
+    표가 이미 `limit` 이하면 그대로 돌려준다.
+    """
+    limit = max(int(limit), 1)
+    if len(frame) <= limit:
+        return frame
+    step = len(frame) / limit
+    return frame.iloc[[int(index * step) for index in range(limit)]]
+
+
 def assign_splits(
     resolved: pd.DataFrame,
     *,

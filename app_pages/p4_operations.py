@@ -257,6 +257,62 @@ def _register_run(df: pd.DataFrame, run_id: str, *, note: str, promote_now: bool
 
 # --- 2) 배치 추론 -------------------------------------------------------------
 
+SCOPE_ALL = "전체"
+SCOPE_TEST = "test 분할"
+SCOPE_UNLABELED = "미라벨"
+SCOPE_CATEGORY = "특정 카테고리"
+SCOPE_VIDEO = "영상 하나"
+SCOPES = (SCOPE_ALL, SCOPE_TEST, SCOPE_UNLABELED, SCOPE_CATEGORY, SCOPE_VIDEO)
+
+
+def _video_subset(df: pd.DataFrame, *, limit: int):
+    """평가할 영상을 고르고 그 프레임을 **영상 전체에 고르게** 뽑는다.
+
+    «영상 A로 만든 모델이 영상 B에서 얼마나 잡는가»를 재려면 영상 하나를 지목할 수 있어야
+    한다. 카테고리로는 안 된다 — 같은 라인에서 찍은 영상이 여럿이면 다 섞인다.
+
+    **앞에서부터 자르지 않는다.** 10분 영상의 앞 200장만 보면 앞 2분을 잰 것이지 그 영상을
+    잰 것이 아니다. 조명이 바뀌거나 물건이 달라지는 뒤쪽을 통째로 놓친다.
+    """
+    frames = labeling.video_frames(df)
+    if frames.empty:
+        st.info(
+            "영상에서 뽑은 프레임이 없습니다. 1단계 **영상에서 프레임 추출**을 먼저 하세요.",
+            icon="🎞️",
+        )
+        st.page_link(guide.PAGE_INGEST, label="1단계 데이터 수집으로 이동", icon="➡️")
+        return None
+
+    counts = frames["group"].astype(str).value_counts()
+    names = counts.index.tolist()
+    picked = st.selectbox(
+        "영상", names, format_func=lambda name: f"{name} ({counts[name]:,}장)",
+        key="p4_inf_video",
+    )
+    chosen = frames[frames["group"].astype(str) == picked]
+
+    if len(chosen) > limit:
+        chosen = labeling.even_sample(chosen, limit)
+        st.caption(
+            f"이 영상 {counts[picked]:,}장 중 **{len(chosen):,}장을 영상 전체에 고르게** "
+            "뽑아 판정합니다. 앞에서부터 자르면 뒷부분을 통째로 놓칩니다."
+        )
+    else:
+        st.caption(f"이 영상의 프레임 {len(chosen):,}장을 **전부** 판정합니다.")
+
+    labeled = int((chosen["label"].astype(str) != config.LABEL_UNLABELED).sum())
+    if labeled:
+        st.caption(
+            f"이 중 {labeled:,}장에 라벨이 있어 **성능 추이** 탭에서 재현율을 잴 수 있습니다."
+        )
+    else:
+        st.caption(
+            "이 영상에는 아직 정답 라벨이 없습니다. 판정은 되지만 **얼마나 맞았는지는 "
+            "알 수 없습니다** — 2단계 **영상 구간 라벨링**에서 정답을 붙이세요."
+        )
+    return chosen
+
+
 def _inference_tab(df: pd.DataFrame) -> None:
     st.markdown(
         "등록된 버전으로 이미지를 판정하고 로그를 남긴다. **로그가 없으면 성능 저하를 감지할 "
@@ -280,21 +336,25 @@ def _inference_tab(df: pd.DataFrame) -> None:
 
     col1, col2, col3 = st.columns(3)
     version = col1.selectbox("버전", usable, index=default_index, key="p4_inf_version")
-    scope = col2.selectbox(
-        "대상", ["전체", "test 분할", "미라벨", "특정 카테고리"], key="p4_inf_scope"
-    )
+    scope = col2.selectbox("대상", list(SCOPES), key="p4_inf_scope")
     limit = col3.number_input("최대 건수", 1, 5000, 200, 10, key="p4_inf_limit")
 
     subset = df
-    if scope == "test 분할":
+    if scope == SCOPE_TEST:
         subset = df[df["split"].astype(str) == config.SPLIT_TEST]
-    elif scope == "미라벨":
+    elif scope == SCOPE_UNLABELED:
         subset = df[df["label"].astype(str) == config.LABEL_UNLABELED]
-    elif scope == "특정 카테고리":
+    elif scope == SCOPE_CATEGORY:
         categories = sorted(df["category"].dropna().astype(str).unique().tolist())
         picked = st.selectbox("카테고리", categories, key="p4_inf_category")
         subset = df[df["category"].astype(str) == picked]
-    subset = subset.head(int(limit))
+    elif scope == SCOPE_VIDEO:
+        subset = _video_subset(df, limit=int(limit))
+        if subset is None:
+            return
+
+    if scope != SCOPE_VIDEO:
+        subset = subset.head(int(limit))
 
     row = registry.get(version)
     threshold_default = float(row["threshold"]) if row is not None and pd.notna(row.get("threshold")) else 0.5

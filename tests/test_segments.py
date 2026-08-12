@@ -116,3 +116,47 @@ def test_seconds_come_from_the_frame_number_and_fps():
     frames = labeling.video_frames(_catalog())
     assert list(frames["frame_index"].astype(float) / 30.0) == [1.0, 3.0]
     assert list(frames["frame_index"].astype(float) / 15.0) == [2.0, 6.0]
+
+
+# --- 영상 하나를 평가 대상으로 고르기 (V2) -----------------------------------
+#
+# «영상 A로 만든 모델이 영상 B에서 얼마나 잡는가»를 재려면 영상 하나를 지목할 수 있어야
+# 한다. 그리고 그 영상을 **고르게** 봐야 한다 — 앞에서부터 자르면 앞부분만 잰 것이 된다.
+
+def _clip(count):
+    return pd.DataFrame({"image_id": [f"f{i:04d}" for i in range(count)], "order": range(count)})
+
+
+def test_a_short_video_is_judged_in_full():
+    assert len(labeling.even_sample(_clip(50), 200)) == 50
+
+
+def test_a_long_video_is_thinned_to_the_limit():
+    assert len(labeling.even_sample(_clip(1200), 200)) == 200
+
+
+def test_sampling_reaches_the_end_of_the_video():
+    """**앞에서부터 200장을 자르면 10분 영상의 앞 2분만 잰 것이다.**
+
+    조명이 바뀌거나 물건이 달라지는 뒷부분을 통째로 놓치는데, 그 사실이 지표에는 드러나지
+    않는다 — 그냥 «재현율 0.9»로 보인다.
+    """
+    picked = labeling.even_sample(_clip(1200), 200)
+    assert picked["order"].iloc[0] == 0
+    assert picked["order"].iloc[-1] >= 1200 * 0.99 - 6, "마지막 표본이 영상 끝에 닿아야 한다"
+
+
+def test_sampling_is_spread_evenly_not_bunched():
+    picked = labeling.even_sample(_clip(1000), 100)
+    gaps = picked["order"].diff().dropna()
+    assert gaps.min() >= 9 and gaps.max() <= 11, "간격이 고르지 않다"
+
+
+def test_every_sampled_frame_is_a_real_frame():
+    """계산이 어긋나 없는 줄을 집으면 그 자리에서 죽는다."""
+    picked = labeling.even_sample(_clip(37), 10)
+    assert len(picked) == 10
+    assert picked["order"].is_monotonic_increasing
+    assert picked["order"].max() < 37
+
+

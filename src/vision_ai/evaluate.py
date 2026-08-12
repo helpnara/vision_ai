@@ -105,6 +105,135 @@ def threshold_for_target_recall(y_true, scores, target_recall: float = 0.95) -> 
     return float(best["threshold"])
 
 
+MIN_CATEGORY_DEFECTS = 5
+"""카테고리별 임계값을 따로 고르려면 그 카테고리에 결함이 이만큼은 있어야 한다.
+
+결함이 한두 장이면 그 한두 장에 맞춰 임계값이 정해진다 — 다음 배치에서 전혀 다른 값이
+나오고, 그 차이는 모델이 좋아진 것이 아니라 표본이 흔들린 것이다. 그런 카테고리는
+전체 임계값을 그대로 쓴다.
+"""
+
+
+def thresholds_by_category(
+    categories, y_true, scores, target_recall: float = 0.95
+) -> tuple[dict[str, float], float | None, dict[str, str]]:
+    """카테고리마다 임계값을 따로 고른다. (카테고리별 값, 전체 기준값, 건너뛴 사유)
+
+    **임계값 하나를 전체에 쓰면 가장 어려운 카테고리가 전체를 끌어내린다.** VisA 실측에서
+    홀드아웃 평균 재현율이 0.925인데 pcb4만 0.840이었다 — pcb4를 잡으려고 임계값을 낮추면
+    나머지 셋의 오탐이 함께 늘고, 안 낮추면 pcb4에서 결함을 놓친다. 어느 쪽도 옳지 않다.
+
+    카테고리는 서로 다른 제품이라 정상 분포부터 다르다. 현장에서도 라인마다 기준을 따로
+    두는 것이 보통이다.
+
+    표본이 적은 카테고리는 **일부러 전체 기준값에 맡긴다** — 결함 두 장에 맞춘 임계값은
+    다음 배치에서 그대로 흔들린다.
+    """
+    frame = pd.DataFrame(
+        {
+            "category": [str(value) for value in categories],
+            "y": np.asarray(y_true).astype(int),
+            "score": np.asarray(scores, dtype=float),
+        }
+    )
+    overall = threshold_for_target_recall(frame["y"], frame["score"], target_recall)
+
+    chosen: dict[str, float] = {}
+    skipped: dict[str, str] = {}
+    for name, group in frame.groupby("category"):
+        defects = int((group["y"] == 1).sum())
+        if defects < MIN_CATEGORY_DEFECTS:
+            skipped[name] = f"결함 {defects}장 — {MIN_CATEGORY_DEFECTS}장 미만이라 전체 기준을 씁니다"
+            continue
+        value = threshold_for_target_recall(group["y"], group["score"], target_recall)
+        if value is None:
+            skipped[name] = f"재현율 {target_recall:.0%}를 만족하는 임계값이 없습니다"
+            continue
+        chosen[str(name)] = float(value)
+
+    return chosen, overall, skipped
+
+
+def apply_thresholds(categories, scores, per_category: dict[str, float], fallback: float):
+    """행마다 자기 카테고리의 임계값을 적용해 결함 여부를 낸다.
+
+    모르는 카테고리는 전체 기준값을 쓴다 — 운영 중에 새 제품이 들어오면 그 카테고리는
+    학습할 때 없던 것이므로, 판정을 거부하는 대신 보수적인 기본값으로 처리한다.
+    """
+    picked = np.array(
+        [float(per_category.get(str(name), fallback)) for name in categories], dtype=float
+    )
+    return np.asarray(scores, dtype=float) >= picked, picked
+
+
+def summarize_mixed(categories, y_true, scores, per_category, fallback) -> dict:
+    """카테고리마다 다른 임계값을 적용한 전체 지표.
+
+    `summarize`는 임계값 하나를 전제하므로 그대로 쓸 수 없다. 혼동행렬만 행별 임계값으로
+    다시 세고, 임계값과 무관한 AUROC·AP는 그대로 쓴다.
+    """
+    y, s = _as_arrays(y_true, scores)
+    predicted, used = apply_thresholds(categories, s, per_category, fallback)
+    predicted = predicted.astype(int)
+
+    tp = int(((predicted == 1) & (y == 1)).sum())
+    fp = int(((predicted == 1) & (y == 0)).sum())
+    fn = int(((predicted == 0) & (y == 1)).sum())
+    tn = int(((predicted == 0) & (y == 0)).sum())
+
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    total = tp + fp + fn + tn
+    return {
+        # 대표값으로는 전체 기준값을 남긴다 — 카테고리마다 다르므로 "그 하나"는 없다.
+        "threshold": float(fallback),
+        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+        "recall": recall,
+        "precision": precision,
+        "specificity": tn / (tn + fp) if (tn + fp) else 0.0,
+        "f1": 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0,
+        "accuracy": (tp + tn) / total if total else 0.0,
+        "miss_rate": fn / (tp + fn) if (tp + fn) else 0.0,
+        "false_alarm_rate": fp / (fp + tn) if (fp + tn) else 0.0,
+        "auroc": auroc(y, s),
+        "average_precision": average_precision(y, s),
+        "threshold_span": (float(used.min()), float(used.max())),
+    }
+
+
+def summarize_by_category(categories, y_true, scores, per_category, fallback) -> pd.DataFrame:
+    """카테고리마다 임계값과 그 임계값에서의 지표를 표로 낸다.
+
+    "카테고리별로 하면 좋아진다"를 말로만 하면 믿을 근거가 없다. 어느 카테고리가 얼마나
+    달라졌는지 숫자로 보여야 고를 수 있다.
+    """
+    frame = pd.DataFrame(
+        {
+            "category": [str(value) for value in categories],
+            "y": np.asarray(y_true).astype(int),
+            "score": np.asarray(scores, dtype=float),
+        }
+    )
+    rows = []
+    for name, group in frame.groupby("category"):
+        used = float(per_category.get(str(name), fallback))
+        metrics = metrics_at_threshold(group["y"], group["score"], used)
+        rows.append(
+            {
+                "category": str(name),
+                "임계값": used,
+                "따로 정했는가": str(name) in per_category,
+                "결함": int((group["y"] == 1).sum()),
+                "정상": int((group["y"] == 0).sum()),
+                "recall": metrics["recall"],
+                "precision": metrics["precision"],
+                "fp": metrics["fp"],
+                "fn": metrics["fn"],
+            }
+        )
+    return pd.DataFrame(rows).sort_values("category").reset_index(drop=True)
+
+
 def summarize(y_true, scores, threshold: float) -> dict:
     """임계값 지표 + 임계값과 무관한 지표를 함께 요약한다."""
     result = metrics_at_threshold(y_true, scores, threshold)

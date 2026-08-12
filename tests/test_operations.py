@@ -734,3 +734,105 @@ def test_candidate_never_becomes_a_rollback_target(sandbox):
     target = registry.rollback_target()
     assert str(target["version"]) == first
     assert target["status"] == registry.STATUS_ARCHIVED
+
+
+# --- 카테고리별 임계값이 운영까지 따라가는가 ---------------------------------
+#
+# 3단계에서 고른 값이 4단계 배치 추론에 안 실리면, 화면에서 본 성능과 실제 판정이
+# 어긋난다. 그 어긋남은 로그를 뜯어보기 전까지 드러나지 않는다.
+
+def _run_with_thresholds(per_category: dict) -> tuple[str, str]:
+    rng = np.random.default_rng(1)
+    X = np.vstack([rng.normal(0, 1, (20, len(features.FEATURE_NAMES))),
+                   rng.normal(3, 1, (20, len(features.FEATURE_NAMES)))])
+    y = np.array([0] * 20 + [1] * 20)
+    model = models.BaselineModel(models.BaselineConfig(kind="logreg")).fit(X, y)
+    artifact = config.model_dir() / "baseline_logreg.joblib"
+    model.save(artifact)
+
+    run_id = experiments.record_run(
+        kind="baseline", model="logreg", split="test", metrics=_metrics(),
+        settings={"kind": "logreg", "category_thresholds": per_category},
+        n_train=40, n_eval=32, artifacts={"model": str(artifact)},
+    )
+    return run_id, str(artifact)
+
+
+def test_category_thresholds_are_registered_with_the_model(sandbox):
+    run_id, artifact = _run_with_thresholds({"pcb1": 0.9, "pcb4": 0.2})
+    version = registry.register(run_id, artifact=artifact).version
+
+    loaded = serving.load_version(version)
+    assert loaded.thresholds == {"pcb1": 0.9, "pcb4": 0.2}
+
+
+def test_a_model_without_category_thresholds_still_loads(sandbox):
+    run_id, artifact = _make_run()
+    version = registry.register(run_id, artifact=artifact).version
+    assert serving.load_version(version).thresholds == {}
+
+
+def test_each_category_is_judged_by_its_own_threshold(sandbox):
+    loaded = serving.LoadedModel(
+        version="v001", kind="baseline", threshold=0.5,
+        thresholds={"pcb1": 0.9, "pcb4": 0.2},
+    )
+    assert loaded.threshold_for("pcb1") == 0.9
+    assert loaded.threshold_for("pcb4") == 0.2
+
+
+def test_an_unknown_category_falls_back_to_the_overall_threshold(sandbox):
+    """운영 중에 새 제품이 들어온다. 판정을 거부하는 대신 전체 기준으로 처리한다."""
+    loaded = serving.LoadedModel(
+        version="v001", kind="baseline", threshold=0.5, thresholds={"pcb1": 0.9}
+    )
+    assert loaded.threshold_for("새제품") == 0.5
+
+
+def test_a_broken_threshold_column_does_not_stop_inference(sandbox):
+    """판정을 멈추느니 전체 기준값으로 돌아가는 편이 낫다."""
+    assert serving._parse_thresholds("{망가진 json") == {}
+    assert serving._parse_thresholds(None) == {}
+    assert serving._parse_thresholds('{"pcb1": "숫자아님"}') == {}
+    assert serving._parse_thresholds('{"pcb1": 0.4}') == {"pcb1": 0.4}
+
+
+def test_batch_inference_applies_the_category_threshold(sandbox, tmp_path):
+    """3단계에서 고른 값이 배치 추론에 안 실리면 화면에서 본 성능과 실제 판정이 어긋난다."""
+    import cv2
+
+    run_id, artifact = _run_with_thresholds({"pcb1": 0.0, "pcb4": 1.0})
+    version = registry.register(run_id, artifact=artifact, promote_now=True).version
+    model = serving.load_version(version)
+
+    paths = []
+    for name in ("a", "b"):
+        path = tmp_path / f"{name}.png"
+        cv2.imwrite(str(path), np.full((64, 64, 3), 120, dtype=np.uint8))
+        paths.append(str(path))
+    rows = pd.DataFrame({
+        "image_id": ["a", "b"], "path_abs": paths,
+        "source": ["s"] * 2, "category": ["pcb1", "pcb4"],
+    })
+
+    frame = serving.run_batch(model, rows).frame()
+    used = dict(zip(frame["category"], frame["threshold"]))
+    assert used == {"pcb1": 0.0, "pcb4": 1.0}
+    # 임계값 0.0은 무엇이든 결함, 1.0은 점수가 그만큼 높아야 결함이다
+    assert frame.set_index("category").loc["pcb1", "decision"] == config.LABEL_DEFECT
+
+
+def test_an_explicit_threshold_still_overrides_everything(sandbox, tmp_path):
+    """시뮬레이터·비교용으로 값 하나를 강제하는 통로는 그대로 남아야 한다."""
+    import cv2
+
+    run_id, artifact = _run_with_thresholds({"pcb1": 0.0, "pcb4": 1.0})
+    version = registry.register(run_id, artifact=artifact).version
+    model = serving.load_version(version)
+
+    path = tmp_path / "x.png"
+    cv2.imwrite(str(path), np.full((64, 64, 3), 120, dtype=np.uint8))
+    rows = pd.DataFrame({"image_id": ["x"], "path_abs": [str(path)], "category": ["pcb1"]})
+
+    frame = serving.run_batch(model, rows, threshold=0.77).frame()
+    assert float(frame.iloc[0]["threshold"]) == 0.77

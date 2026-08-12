@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -26,8 +27,17 @@ class LoadedModel:
     version: str
     kind: str
     threshold: float
+    thresholds: dict[str, float] = field(default_factory=dict)
     baseline: models.BaselineModel | None = None
     anomaly: models.PatchAnomalyModel | None = None
+
+    def threshold_for(self, category) -> float:
+        """이 카테고리에 쓸 임계값.
+
+        카테고리별 값이 없으면 전체 기준값을 쓴다. **운영 중에 새 제품이 들어오면** 그
+        카테고리는 학습할 때 없던 것이므로, 판정을 거부하는 대신 전체 기준으로 처리한다.
+        """
+        return float(self.thresholds.get(str(category), self.threshold))
 
     def score_image(self, rgb: np.ndarray) -> float:
         """이미지 1장의 결함 점수."""
@@ -46,6 +56,28 @@ class LoadedModel:
         return self.anomaly.score_map(features.preprocess(rgb))
 
 
+def _parse_thresholds(value) -> dict[str, float]:
+    """레지스트리에 JSON으로 적힌 카테고리별 임계값을 읽는다.
+
+    깨져 있으면 **빈 값으로 본다** — 판정을 멈추느니 전체 기준값으로 돌아가는 편이 낫다.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    found = {}
+    for name, number in parsed.items():
+        try:
+            found[str(name)] = float(number)
+        except (TypeError, ValueError):
+            continue
+    return found
+
+
 def load_version(version: str) -> LoadedModel:
     """레지스트리 버전을 불러온다."""
     row = registry.get(version)
@@ -60,16 +92,17 @@ def load_version(version: str) -> LoadedModel:
 
     threshold = row.get("threshold")
     threshold = float(threshold) if pd.notna(threshold) else 0.5
+    thresholds = _parse_thresholds(row.get("thresholds"))
     kind = str(row.get("kind", ""))
 
     if kind == "baseline":
         return LoadedModel(
-            version=version, kind=kind, threshold=threshold,
+            version=version, kind=kind, threshold=threshold, thresholds=thresholds,
             baseline=models.BaselineModel.load(Path(artifact)),
         )
     if kind == "anomaly":
         return LoadedModel(
-            version=version, kind=kind, threshold=threshold,
+            version=version, kind=kind, threshold=threshold, thresholds=thresholds,
             anomaly=models.PatchAnomalyModel.load(Path(artifact)),
         )
     raise ValueError(f"추론을 지원하지 않는 종류입니다: {kind}")
@@ -106,7 +139,9 @@ def run_batch(
     `transform`은 이미지를 읽은 뒤 특징을 뽑기 전에 끼워 넣는다. 운영 시나리오 시뮬레이터가
     조명·초점 변화를 재현할 때 쓴다. 실제 배치 추론에서는 쓰지 않는다.
     """
-    threshold = float(model.threshold if threshold is None else threshold)
+    # threshold를 직접 주면 그 값 하나로 전체를 판정한다(시뮬레이터·비교용).
+    # 안 주면 모델이 등록될 때 정해진 카테고리별 값을 쓴다.
+    fixed = None if threshold is None else float(threshold)
     records: list[dict] = []
     vectors: list[np.ndarray] = []
     image_ids: list[str] = []
@@ -130,15 +165,17 @@ def run_batch(
             )
             latency_ms = (time.perf_counter() - started) * 1000.0
 
+            category = str(row.get("category", ""))
+            used = fixed if fixed is not None else model.threshold_for(category)
             records.append(
                 {
                     "version": model.version,
                     "image_id": str(row.get("image_id", "")),
                     "source": str(row.get("source", "")),
-                    "category": str(row.get("category", "")),
+                    "category": category,
                     "score": score,
-                    "threshold": threshold,
-                    "decision": config.LABEL_DEFECT if score >= threshold else config.LABEL_NORMAL,
+                    "threshold": used,
+                    "decision": config.LABEL_DEFECT if score >= used else config.LABEL_NORMAL,
                     "latency_ms": round(latency_ms, 2),
                 }
             )

@@ -36,7 +36,7 @@ STATUS_KO = {
 
 REGISTRY_COLUMNS: tuple[str, ...] = (
     "version", "created_at", "promoted_at", "status", "run_id", "kind", "model",
-    "artifact", "threshold", "recall", "precision", "f1", "auroc",
+    "artifact", "threshold", "thresholds", "recall", "precision", "f1", "auroc",
     "n_train", "n_eval", "note",
 )
 
@@ -255,6 +255,14 @@ def register(
     for key in _METRIC_KEYS:
         value = metrics.get(key)
         row[key] = float(value) if isinstance(value, (int, float)) else None
+
+    # 카테고리별 임계값. CSV 한 칸에 사전을 담아야 하므로 JSON 문자열로 적는다.
+    # 비어 있으면 빈 칸으로 둔다 — "{}"가 들어가면 값이 있는 것처럼 보인다.
+    per_category = (detail.get("settings") or {}).get("category_thresholds") or {}
+    row["thresholds"] = (
+        json.dumps({str(k): float(v) for k, v in per_category.items()}, ensure_ascii=False)
+        if per_category else None
+    )
 
     merged = pd.concat([registry.iloc[::-1], pd.DataFrame([row])], ignore_index=True)
     _save_registry(merged.iloc[::-1].reset_index(drop=True))

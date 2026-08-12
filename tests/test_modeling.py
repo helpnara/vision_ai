@@ -621,3 +621,89 @@ def test_impact_by_prevalence_orders_rows_and_keeps_columns():
     assert list(frame["불량률"]) == [0.5, 0.1, 0.01]
     # 불량률이 낮아질수록 정밀도는 단조 감소한다
     assert frame["기대 정밀도"].is_monotonic_decreasing
+
+
+# --- 카테고리별 임계값 ------------------------------------------------------
+#
+# 임계값 하나를 전체에 쓰면 **가장 어려운 카테고리가 전체를 끌어내린다.** VisA 실측에서
+# 평균 재현율 0.925인데 pcb4만 0.840이었다 — pcb4를 잡으려 낮추면 나머지의 오탐이 늘고,
+# 안 낮추면 pcb4에서 결함을 놓친다.
+
+def _two_lines(rng):
+    """쉬운 라인(easy)과 어려운 라인(hard). 점수 분포가 서로 다르다."""
+    categories = ["easy"] * 60 + ["hard"] * 60
+    y = [0] * 40 + [1] * 20 + [0] * 40 + [1] * 20
+    scores = (
+        list(rng.normal(0, 1, 40)) + list(rng.normal(4, 1, 20))
+        + list(rng.normal(0, 1, 40)) + list(rng.normal(1, 1, 20))
+    )
+    return categories, y, scores
+
+
+def test_each_category_gets_its_own_threshold():
+    rng = np.random.default_rng(0)
+    categories, y, scores = _two_lines(rng)
+    per_category, overall, _ = evaluate.thresholds_by_category(categories, y, scores, 0.95)
+
+    assert set(per_category) == {"easy", "hard"}
+    assert per_category["easy"] > per_category["hard"], "쉬운 라인이 더 높은 기준을 견딘다"
+    assert overall is not None
+
+
+def test_per_category_beats_one_threshold_on_false_alarms():
+    """어려운 라인에 맞춘 임계값 하나를 전체에 쓰면 쉬운 라인의 오탐이 함께 는다."""
+    rng = np.random.default_rng(0)
+    categories, y, scores = _two_lines(rng)
+    per_category, overall, _ = evaluate.thresholds_by_category(categories, y, scores, 0.95)
+
+    single = evaluate.summarize(y, scores, overall)
+    mixed = evaluate.summarize_mixed(categories, y, scores, per_category, overall)
+
+    assert mixed["recall"] >= 0.95
+    assert mixed["fp"] < single["fp"], "같은 재현율에서 오탐이 줄어야 의미가 있다"
+
+
+def test_a_category_with_too_few_defects_falls_back():
+    """결함 두 장에 맞춘 임계값은 다음 배치에서 그대로 흔들린다 — 모델이 좋아진 게 아니다."""
+    rng = np.random.default_rng(0)
+    categories, y, scores = _two_lines(rng)
+    categories += ["rare"] * 6
+    y += [0] * 4 + [1] * 2
+    scores += list(rng.normal(0, 1, 4)) + list(rng.normal(3, 1, 2))
+
+    per_category, _, skipped = evaluate.thresholds_by_category(categories, y, scores, 0.95)
+    assert "rare" not in per_category
+    assert "결함 2장" in skipped["rare"]
+
+
+def test_an_unknown_category_uses_the_overall_threshold():
+    """운영 중에 새 제품이 들어오면 학습할 때 없던 카테고리다. 판정을 거부할 수는 없다."""
+    predicted, used = evaluate.apply_thresholds(
+        ["easy", "새제품"], [1.0, 1.0], {"easy": 5.0}, fallback=0.5
+    )
+    assert list(predicted) == [False, True]
+    assert list(used) == [5.0, 0.5]
+
+
+def test_the_category_table_shows_which_ones_were_set_apart():
+    """'카테고리별로 하면 좋아진다'를 말로만 하면 고를 근거가 없다."""
+    rng = np.random.default_rng(0)
+    categories, y, scores = _two_lines(rng)
+    per_category, overall, _ = evaluate.thresholds_by_category(categories, y, scores, 0.95)
+
+    table = evaluate.summarize_by_category(categories, y, scores, per_category, overall)
+    assert list(table["category"]) == ["easy", "hard"]
+    assert table["따로 정했는가"].all()
+    assert (table["recall"] >= 0.95).all()
+
+
+def test_mixed_metrics_keep_the_threshold_free_ones():
+    """AUROC·AP는 임계값과 무관하므로 카테고리별로 나눠도 같아야 한다."""
+    rng = np.random.default_rng(0)
+    categories, y, scores = _two_lines(rng)
+    per_category, overall, _ = evaluate.thresholds_by_category(categories, y, scores, 0.95)
+
+    single = evaluate.summarize(y, scores, overall)
+    mixed = evaluate.summarize_mixed(categories, y, scores, per_category, overall)
+    assert mixed["auroc"] == pytest.approx(single["auroc"])
+    assert mixed["average_precision"] == pytest.approx(single["average_precision"])

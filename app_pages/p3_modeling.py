@@ -143,6 +143,99 @@ def _synthetic_warning(labeled: pd.DataFrame) -> None:
         )
 
 
+# --- 카테고리별 임계값 ------------------------------------------------------
+
+def _category_switch(labeled, *, key: str) -> bool:
+    """카테고리별 임계값을 쓸지 고르는 스위치. **학습 버튼보다 위에 둔다.**
+
+    결과가 나온 뒤에 켜는 자리에 두었더니 못 쓰는 기능이 됐다 — Streamlit은 위젯을 건드릴
+    때마다 화면을 다시 그리는데, 학습은 버튼을 누른 그 실행에서만 도므로 **체크하는 순간
+    결과가 통째로 사라졌다.** 분류기·목표 재현율과 같은 줄에 두면 그런 일이 없다.
+
+    카테고리가 하나뿐이면 아예 보이지 않는다. 고를 것이 없는 선택지는 소음이다.
+    """
+    if labeled.empty or labeled["category"].astype(str).nunique() < 2:
+        return False
+    return st.checkbox(
+        "카테고리별 임계값", value=False, key=key,
+        help="카테고리는 서로 다른 제품이라 정상 분포부터 다릅니다. 임계값 하나를 전체에 쓰면 "
+             "가장 어려운 카테고리가 전체를 끌어내립니다. 켜면 이 값들이 모델과 함께 등록되어 "
+             "4단계 배치 추론에서도 그대로 쓰이고, 학습에 없던 새 카테고리는 전체 기준으로 판정합니다.",
+    )
+
+
+def _delta(new_value, old_value, *, fmt: str):
+    """값이 그대로면 화살표를 띄우지 않는다.
+
+    Streamlit은 0도 화살표와 함께 그린다. 빨간 `↑ +0건`은 나빠진 것처럼 읽힌다.
+    """
+    difference = new_value - old_value
+    return None if difference == 0 else format(difference, fmt)
+
+
+def _category_thresholds(ids, labeled, y_eval, scores, target_recall, threshold, *, key, enabled):
+    """카테고리마다 임계값을 따로 골랐을 때의 효과를 보여주고, 켜져 있으면 적용한다.
+
+    **임계값 하나를 전체에 쓰면 가장 어려운 카테고리가 전체를 끌어내린다.** VisA 실측에서
+    평균 재현율이 0.925인데 pcb4만 0.840이었다 — pcb4를 잡으려고 임계값을 낮추면 나머지
+    셋의 오탐이 함께 늘고, 안 낮추면 pcb4에서 결함을 놓친다.
+
+    표는 **꺼져 있어도 보여준다.** 켜면 무엇이 달라지는지 모르는 채로 고르게 할 수는 없다.
+    """
+    lookup = dict(zip(labeled["image_id"].astype(str), labeled["category"].astype(str)))
+    categories = [lookup.get(str(image_id), "") for image_id in ids]
+    if len(set(categories)) < 2:
+        return {}, None
+
+    per_category, overall, skipped = evaluate.thresholds_by_category(
+        categories, y_eval, scores, target_recall
+    )
+    fallback = float(threshold if overall is None else overall)
+
+    st.divider()
+    st.markdown("**카테고리별 임계값**")
+    st.caption(
+        "카테고리는 서로 다른 제품이라 정상 분포부터 다릅니다. 임계값 하나를 전체에 쓰면 "
+        "**가장 어려운 카테고리가 전체를 끌어내립니다** — 그것을 잡으려 낮추면 나머지의 오탐이 "
+        "늘고, 안 낮추면 그 카테고리에서 결함을 놓칩니다. 현장에서도 라인마다 기준을 따로 둡니다."
+    )
+
+    single = evaluate.summarize(y_eval, scores, threshold)
+    mixed = evaluate.summarize_mixed(categories, y_eval, scores, per_category, fallback)
+    cols = st.columns(3)
+    cols[0].metric(
+        "재현율", f"{mixed['recall']:.1%}",
+        delta=_delta(mixed["recall"], single["recall"], fmt="+.1%"),
+        help=glossary.caption("recall"),
+    )
+    cols[1].metric(
+        "오탐", f"{mixed['fp']:,}건",
+        delta=_delta(mixed["fp"], single["fp"], fmt="+,"), delta_color="inverse",
+    )
+    cols[2].metric(
+        "미탐", f"{mixed['fn']:,}건",
+        delta=_delta(mixed["fn"], single["fn"], fmt="+,"), delta_color="inverse",
+    )
+    st.caption(
+        f"임계값 하나({threshold:.3f})로는 재현율 {single['recall']:.1%} · "
+        f"오탐 {single['fp']:,}건 · 미탐 {single['fn']:,}건입니다."
+    )
+
+    table = evaluate.summarize_by_category(categories, y_eval, scores, per_category, fallback)
+    ui.responsive_table(
+        table, key=f"{key}__cat", title_column="category", hide_index=True, width="stretch"
+    )
+    for name, reason in skipped.items():
+        st.caption(f"`{name}` — {reason}")
+
+    if not enabled:
+        st.caption(
+            "지금은 **임계값 하나**를 쓰고 있습니다. 위의 «카테고리별 임계값»을 켜고 다시 "
+            "학습하면 이 표의 값이 적용되어 모델과 함께 등록됩니다."
+        )
+    return (per_category, fallback) if enabled else ({}, None)
+
+
 # --- 1) 학습 데이터 -----------------------------------------------------------
 
 def _data_tab(df: pd.DataFrame) -> None:
@@ -283,6 +376,7 @@ def _baseline_tab(df: pd.DataFrame) -> None:
         user_settings.load().target_recall, 0.01, key="p3_bl_recall",
         help="이 재현율을 만족하는 임계값 중 오탐이 가장 적은 값을 자동 선택한다.",
     )
+    use_categories = _category_switch(labeled, key="p3_bl_percat")
 
     # 장수는 라벨 표만 세면 알 수 있다. 특징 추출은 학습을 누른 뒤로 미룬다 —
     # 화면을 열기만 해도 전량 추출하면 4,584장 기준 90초를 기다려야 한다.
@@ -327,10 +421,23 @@ def _baseline_tab(df: pd.DataFrame) -> None:
     metrics = evaluate.summarize(y_eval, scores, threshold)
     ids = [dataset.image_ids[i] for i in np.flatnonzero(eval_mask)]
 
+    settings = {"kind": kind, "balanced": balanced, "target_recall": target_recall}
+    per_category, fallback = _category_thresholds(
+        ids, labeled, y_eval, scores, target_recall, threshold,
+        key="p3_base", enabled=use_categories,
+    )
+    if per_category:
+        lookup = dict(zip(labeled["image_id"].astype(str), labeled["category"].astype(str)))
+        metrics = evaluate.summarize_mixed(
+            [lookup.get(str(i), "") for i in ids], y_eval, scores, per_category, fallback
+        )
+        threshold = fallback
+        settings["category_thresholds"] = per_category
+
     _store_result(
         kind="baseline", model=kind, split=eval_split, scores=scores, y=y_eval,
         image_ids=ids, threshold=threshold, metrics=metrics,
-        settings={"kind": kind, "balanced": balanced, "target_recall": target_recall},
+        settings=settings,
         n_train=n_train,
     )
 
@@ -344,7 +451,7 @@ def _baseline_tab(df: pd.DataFrame) -> None:
 
     run_id = experiments.record_run(
         kind="baseline", model=kind, split=eval_split, metrics=metrics,
-        settings={"kind": kind, "balanced": balanced, "target_recall": target_recall},
+        settings=settings,
         n_train=n_train, n_eval=n_eval,
         artifacts={"model": str(artifact_path) if artifact_path else None},
     )
@@ -452,6 +559,7 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
         "목표 재현율", 0.50, 1.00, user_settings.load().target_recall, 0.01,
         key="p3_an_recall"
     )
+    use_categories = _category_switch(labeled, key="p3_an_percat")
 
     eval_rows = labeled[labeled["split"].astype(str) == eval_split]
     st.caption(
@@ -535,6 +643,17 @@ def _anomaly_tab(df: pd.DataFrame) -> None:
         "patch": model.config.patch, "stride": model.config.stride,
         "target_recall": target_recall,
     }
+    per_category, fallback = _category_thresholds(
+        ids, labeled, y_array, scores_array, target_recall, threshold,
+        key="p3_anom", enabled=use_categories,
+    )
+    if per_category:
+        lookup = dict(zip(labeled["image_id"].astype(str), labeled["category"].astype(str)))
+        metrics = evaluate.summarize_mixed(
+            [lookup.get(str(i), "") for i in ids], y_array, scores_array, per_category, fallback
+        )
+        threshold = fallback
+        settings["category_thresholds"] = per_category
     st.session_state[_ANOMALY_KEY] = model
     _store_result(
         kind="anomaly", model="mahalanobis", split=eval_split, scores=scores_array,

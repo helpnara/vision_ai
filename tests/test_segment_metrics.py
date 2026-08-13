@@ -161,6 +161,41 @@ def test_a_single_frame_video_has_no_alarm_rate():
     assert math.isnan(report.false_alarms_per_min)
 
 
+def test_a_model_that_shouts_defect_at_everything_does_not_score_perfectly():
+    """**실측에서 실제로 걸린 구멍이다.**
+
+    전 구간에 알람을 켜 놓으면 예측 구간은 하나뿐이고 그것이 모든 정답 구간과 겹친다.
+    «정답과 겹치지 않은 예측 구간»으로 헛알람을 세면 **가장 나쁜 모델이 만점을 받는다** —
+    구간 재현율 1.00에 헛알람 0건.
+    """
+    report = _report("..xx....xx....xx....", "x" * 20)
+    assert report.segment_recall == 1.0
+    assert report.false_alarms, "전부 결함이라고 했는데 헛알람이 0건이다"
+
+
+def test_an_always_on_alarm_is_called_out_in_the_summary():
+    """숫자가 좋아 보이면 사람은 숫자를 믿는다. 그럴 때일수록 말로 짚어 줘야 한다."""
+    report = _report("..xx....xx....xx....", "x" * 20)
+    assert report.flooding
+    assert "켜져 있습니다" in report.summary()
+
+
+def test_a_normal_model_is_not_accused_of_flooding():
+    report = _report("..xx....xx....xx....", "..xx....xx..........")
+    assert not report.flooding
+    assert "켜져 있습니다" not in report.summary()
+
+
+def test_a_long_alarm_next_to_a_defect_is_still_a_false_alarm():
+    """봐주는 것은 **한두 장**의 넘겨 잡기지, 그 뒤로 계속 이어지는 알람이 아니다."""
+    report = _report("xx..................", "xxxxxxxxxxxx........")
+    assert report.false_alarms
+
+
+def test_the_alarm_time_ratio_is_reported():
+    assert _report("." * 10, "xxxxx.....").false_alarm_time_ratio == 0.5
+
+
 def test_the_summary_carries_both_numbers():
     text = _report("..xxx...xx..", "..x.....xx..").summary()
     assert "2곳" in text and "구간 재현율" in text and "분당" in text

@@ -41,8 +41,21 @@ PSI_SHIFTED = 0.25
 # PSI는 표본이 적으면 같은 분포에서도 크게 나온다. 측정해 보면 10구간 기준으로
 # n=40일 때 동일 분포의 PSI 중앙값이 0.24(= "변화" 임계값 수준), n=20이면 1.0을 넘는다.
 # 그래서 (1) 구간당 최소 표본을 확보하도록 구간을 합치고, (2) 그래도 부족하면 판정을 보류한다.
-MIN_SAMPLES_PER_BIN = 30
-MIN_DRIFT_SAMPLES = 60
+#
+# **구간당 30장은 부족했다.** 같은 분포에서 뽑은 두 묶음(각 300장, 특징 14개)을 재 보니
+# 특징별 PSI의 최댓값이 0.18~0.29까지 올라갔다 — 아무 일도 없는데 "주의"·"변화"가 뜬다.
+# 특징이 14개면 그중 하나가 우연히 튈 확률이 그만큼 커지는데, 임계값(0.10/0.25)은 특징
+# **하나**를 기준으로 만들어진 값이라 여기에 그대로 쓸 수 없다.
+#
+# 구간당 100장으로 올려 다시 재면 같은 조건에서 최댓값이 0.08로 떨어지고(→ "안정"),
+# 특징 하나만 실제로 이동시킨 경우의 PSI는 6.5로 그대로 남는다. 실제 변화는 잃지 않고
+# 잡음만 눌린다. 표본이 적을 때 구간이 더 합쳐질 뿐이므로 큰 표본에서는 동작이 같다.
+MIN_SAMPLES_PER_BIN = 100
+
+# 위 측정에서 같은 분포의 PSI 최댓값: n=600 → 0.07, n=300 → 0.08, n=200 → 0.14,
+# n=100 → 0.25, n=60 → 0.32. 200장 미만은 잡음만으로 "변화"에 닿으므로 판정하지 않는다.
+# 200~300장 구간은 여전히 "주의"가 뜰 수 있다 — 판정을 뒤집을 근거로 쓰기 전에 표본을 늘릴 것.
+MIN_DRIFT_SAMPLES = 200
 
 LEVEL_INSUFFICIENT = "표본 부족"
 DRIFT_LEVELS = ("안정", "주의", "변화", LEVEL_INSUFFICIENT)
@@ -244,12 +257,17 @@ def feature_drift(baseline: dict, current: np.ndarray, feature_names: list[str] 
 
     표본이 `MIN_DRIFT_SAMPLES`보다 적으면 PSI를 계산하지 않고 '표본 부족'으로 표시한다.
     소표본에서 나온 큰 PSI를 드리프트로 오해하면 불필요한 재학습을 유발한다.
+
+    구간을 합칠 때는 **기준선과 현재 중 적은 쪽**을 본다. PSI의 잡음은 두 분포 중 얇은
+    쪽에서 나오므로, 현재만 보면 기준선이 얇을 때 그 잡음을 그대로 통과시킨다.
     """
     current = np.asarray(current, dtype=float)
     edges = baseline.get("edges", {})
     all_props = baseline.get("props", {})
     stats = baseline.get("stats", {})
     n_current = current.shape[0]
+    n_baseline = int(baseline.get("n_samples", 0) or n_current)
+    n_effective = min(n_current, n_baseline) if n_baseline else n_current
     enough = n_current >= MIN_DRIFT_SAMPLES
 
     rows = []
@@ -259,7 +277,7 @@ def feature_drift(baseline: dict, current: np.ndarray, feature_names: list[str] 
         column = current[:, index]
         if enough:
             merged_edges, proportions = coarsen_edges(
-                edges[name], n_current, props=all_props.get(name) or None
+                edges[name], n_effective, props=all_props.get(name) or None
             )
             psi = psi_from_edges(merged_edges, column, expected=proportions)
         else:

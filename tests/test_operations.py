@@ -404,6 +404,51 @@ def test_same_distribution_does_not_raise_false_alarm():
     assert summary["level"] == "안정", summary
 
 
+def test_a_thin_baseline_does_not_invent_drift():
+    """**기준선이 얇으면 없는 드리프트를 있다고 말한다.**
+
+    같은 분포에서 뽑은 두 묶음(각 300장, 특징 14개)을 재 봤더니 특징별 PSI의 최댓값이
+    0.18~0.29까지 올라갔다. 임계값 0.10/0.25는 특징 **하나**를 기준으로 만들어진 값인데,
+    특징이 14개면 그중 하나가 우연히 튈 확률이 그만큼 커진다.
+
+    아무 일도 없는데 "변화"가 뜨면 그다음이 전부 어긋난다 — 불필요한 재학습을 부르고,
+    두 영상 비교(V4)에서는 «촬영 탓»이라는 엉뚱한 결론까지 내린다.
+    """
+    rng = np.random.default_rng(11)
+    names = [f"f{i}" for i in range(14)]
+    baseline = registry.make_baseline(rng.normal(0, 1, (300, 14)), names)
+    current = rng.normal(0, 1, (300, 14))
+
+    summary = monitoring.drift_summary(monitoring.feature_drift(baseline, current, names))
+    assert summary["level"] == "안정", summary
+
+
+def test_a_real_shift_survives_the_noise_fix():
+    """잡음을 누르다가 실제 변화까지 놓치면 감시 자체가 무의미해진다."""
+    rng = np.random.default_rng(12)
+    names = [f"f{i}" for i in range(14)]
+    baseline = registry.make_baseline(rng.normal(0, 1, (300, 14)), names)
+    current = rng.normal(0, 1, (300, 14))
+    current[:, 0] += 3.0                      # 특징 하나만 크게 이동 (조명이 바뀐 상황)
+
+    summary = monitoring.drift_summary(monitoring.feature_drift(baseline, current, names))
+    assert summary["level"] == "변화", summary
+
+
+def test_the_thinner_side_decides_how_coarse_the_bins_are():
+    """PSI의 잡음은 두 분포 중 **얇은 쪽**에서 나온다.
+
+    현재 표본만 보고 구간을 정하면, 기준선이 얇을 때 그 잡음을 그대로 통과시킨다.
+    """
+    rng = np.random.default_rng(13)
+    names = [f"f{i}" for i in range(14)]
+    thin = registry.make_baseline(rng.normal(0, 1, (220, 14)), names)
+    current = rng.normal(0, 1, (5000, 14))
+
+    summary = monitoring.drift_summary(monitoring.feature_drift(thin, current, names))
+    assert summary["level"] == "안정", summary
+
+
 def test_shifted_distribution_is_detected():
     rng = np.random.default_rng(8)
     names = [f"f{i}" for i in range(6)]

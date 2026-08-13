@@ -8,6 +8,7 @@ import streamlit as st
 
 from vision_ai import (
     claude_review,
+    compare,
     config,
     evaluate,
     experiments,
@@ -15,6 +16,7 @@ from vision_ai import (
     glossary,
     guide,
     labeling,
+    models,
     monitoring,
     playback,
     registry,
@@ -577,6 +579,102 @@ def _show_playback(result) -> None:
     st.caption(f"판정본 위치: `{result.directory}`")
 
 
+# --- 영상 비교 (V4) -----------------------------------------------------------
+
+def _feature_matrix(resolved: pd.DataFrame, image_ids, progress=None) -> np.ndarray:
+    """이 프레임들의 특징 행렬. 3단계와 같은 캐시를 쓰므로 두 번째부터는 즉시 나온다."""
+    rows = resolved[resolved["image_id"].isin(set(image_ids))]
+    if rows.empty:
+        return np.empty((0, len(features.FEATURE_NAMES)), dtype=np.float32)
+    dataset = models.build_dataset(
+        rows["path_abs"].tolist(), [0] * len(rows), rows["image_id"].tolist(), progress=progress
+    )
+    return dataset.X
+
+
+def _compare_tab(df: pd.DataFrame) -> None:
+    """«모델 탓인가 촬영 탓인가» 한 화면 (V4)."""
+    st.markdown(
+        "영상 A로 만든 모델을 영상 B에 걸었더니 성능이 떨어졌다. 그때 할 일은 **촬영을 "
+        "맞추는 것**과 **모델을 손보는 것**으로 갈리는데, 둘은 서로 배타적이다 — 틀린 쪽을 "
+        "고르면 시간만 버린다. 두 영상의 지표와 입력 분포를 한 화면에 놓고 결론을 낸다."
+    )
+    if df.empty:
+        st.info("수집된 이미지가 없습니다.", icon="📥")
+        return
+
+    log = monitoring.load_log()
+    feedback = monitoring.feedback_frame(log, df) if not log.empty else pd.DataFrame()
+    names = segments.videos_in(feedback)
+    if len(names) < 2:
+        st.warning(
+            "비교하려면 **정답이 붙은 영상이 두 편** 필요합니다. "
+            f"지금은 {len(names)}편입니다. 배치 추론(대상: 영상 하나)을 각 영상에 돌리고, "
+            "2단계 **영상 구간 라벨링**으로 정답을 붙이세요.",
+            icon="🎞️",
+        )
+        return
+
+    col1, col2, col3 = st.columns(3)
+    left = col1.selectbox("기준 영상 (학습에 쓴 쪽)", names, index=0, key="p4_cmp_left")
+    others = [n for n in names if n != left]
+    right = col2.selectbox("비교할 영상 (새 촬영본)", others, index=0, key="p4_cmp_right")
+    fps = col3.number_input("영상 fps", 1.0, 240.0, 30.0, 1.0, key="p4_cmp_fps")
+
+    frames = labeling.video_frames(df)
+    reports = {
+        name: segments.from_feedback(feedback, frames, name, fps=float(fps))
+        for name in (left, right)
+    }
+    if any(report is None for report in reports.values()):
+        st.caption("두 영상 모두 정답과 대조할 프레임이 있어야 비교할 수 있습니다.")
+        return
+
+    if not st.button("🆚 두 영상 비교", type="primary", key="p4_cmp_run"):
+        st.caption("입력 분포까지 비교하려면 특징을 다시 읽어야 해서 버튼으로 시작합니다.")
+        return
+
+    bar = st.progress(0.0, text="특징 읽는 중...")
+
+    def on_progress(done: int, total: int) -> None:
+        bar.progress(min(done / max(total, 1), 1.0), text=f"특징 읽는 중... {done:,}/{total:,}")
+
+    matrices = {}
+    for name in (left, right):
+        picked = feedback[feedback["group"].astype(str) == name]["image_id"]
+        matrices[name] = _feature_matrix(df, picked, progress=on_progress)
+    bar.empty()
+
+    verdict = compare.Comparison(
+        reference=compare.side_from(reports[left], left, frames=len(matrices[left])),
+        candidate=compare.side_from(reports[right], right, frames=len(matrices[right])),
+        drift=compare.drift_between(matrices[left], matrices[right], features.FEATURE_NAMES),
+    )
+
+    st.dataframe(verdict.table(), hide_index=True, width="stretch")
+
+    cause = verdict.cause()
+    if cause == compare.CAUSE_NONE:
+        st.success(verdict.verdict(), icon="✅")
+    elif cause == compare.CAUSE_UNKNOWN:
+        st.warning(verdict.verdict(), icon="📏")
+    else:
+        st.error(verdict.verdict(), icon="🚨")
+    st.markdown(f"**다음에 할 일** — {verdict.advice()}")
+
+    drift = verdict.drift
+    st.caption(
+        f"입력 분포: 평균 PSI {drift.psi_mean:.3f} ({drift.level}) · 비교 표본 "
+        f"{drift.n_samples:,}장"
+        if np.isfinite(drift.psi_mean)
+        else f"입력 분포: 표본이 부족해 비교하지 않았습니다 ({drift.n_samples:,}장)."
+    )
+    st.caption(
+        "성능이 떨어진 것과 입력이 변한 것이 **같이 일어났다**는 사실을 말할 뿐, 인과를 "
+        "증명하지는 않습니다."
+    )
+
+
 # --- 3) 드리프트 감시 ---------------------------------------------------------
 
 def _drift_tab(df: pd.DataFrame) -> None:
@@ -618,7 +716,12 @@ def _drift_tab(df: pd.DataFrame) -> None:
     cols = st.columns(4)
     cols[0].metric("검사 표본", f"{summary['n_current']:,}")
     cols[1].metric("판정", summary["level"])
-    cols[2].metric("변화 특징", f"{summary['shifted']:,}", help=glossary.detail("psi"))
+    # «판정: 주의» 옆에 «변화 특징 0»만 있으면 카드가 근거 없이 주의라고 말하는 것으로 읽힌다.
+    # 주의 단계에서 판정을 끌어올린 것은 «주의 특징»이므로 둘을 같이 센다.
+    cols[2].metric(
+        "변화 / 주의 특징", f"{summary['shifted']:,} / {summary['watch']:,}",
+        help=glossary.detail("psi"),
+    )
     cols[3].metric(
         "평균 PSI", f"{summary['mean_psi']:.3f}" if np.isfinite(summary["mean_psi"]) else "—"
     )
@@ -1171,7 +1274,7 @@ def render() -> None:
     df = _resolved()
     tabs = st.tabs(
         ["🎬 운영 시나리오 시연", "📚 모델 레지스트리", "▶️ 배치 추론", "🎥 판정 영상",
-         "📉 드리프트 감시", "📈 성능 추이", "🔁 재학습 판단", "🔍 판정 이력"]
+         "🆚 영상 비교", "📉 드리프트 감시", "📈 성능 추이", "🔁 재학습 판단", "🔍 판정 이력"]
     )
     with tabs[0]:
         _scenario_tab(df)
@@ -1182,12 +1285,14 @@ def render() -> None:
     with tabs[3]:
         _playback_tab()
     with tabs[4]:
-        _drift_tab(df)
+        _compare_tab(df)
     with tabs[5]:
-        _performance_tab(df)
+        _drift_tab(df)
     with tabs[6]:
-        _retraining_tab(df)
+        _performance_tab(df)
     with tabs[7]:
+        _retraining_tab(df)
+    with tabs[8]:
         _trace_tab(df)
 
 

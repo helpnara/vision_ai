@@ -851,6 +851,18 @@ def _segment_section(df: pd.DataFrame, feedback: pd.DataFrame) -> None:
     if contrast:
         st.warning(contrast, icon="📐")
 
+    # V6 — 미탐이 몇 건인지보다 **어디서** 놓쳤는지가 다음에 무엇을 라벨링할지 정해 준다.
+    st.markdown("**정답 구간과 모델 알람**")
+    ui.segment_timeline(
+        segments.bands(report),
+        duration=max(report.duration_sec, 0.001),
+        key=f"p4_seg_timeline::{picked}",
+    )
+    st.caption(
+        "위가 정답, 아래가 모델이 알람을 켠 시간입니다. **빨간 띠가 다음에 볼 곳**이고, "
+        "주황 띠가 길게 이어지면 «다 결함이라고 하는 중»입니다."
+    )
+
     if report.missed:
         st.error(
             "놓친 구간 — " + ", ".join(s.span_text() for s in report.missed[:10]),

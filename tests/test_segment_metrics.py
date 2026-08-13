@@ -201,6 +201,81 @@ def test_the_summary_carries_both_numbers():
     assert "2곳" in text and "구간 재현율" in text and "분당" in text
 
 
+# --- 타임라인에 그릴 띠 (V6) -------------------------------------------------
+#
+# 미탐이 **몇 건**인지보다 **영상의 어디서** 놓쳤는지가 다음에 무엇을 더 라벨링할지 정해 준다.
+
+def _kinds(report, lane: str) -> list[str]:
+    return [b["kind"] for b in segments.bands(report) if b["lane"] == lane]
+
+
+def test_a_caught_segment_and_a_missed_one_are_told_apart():
+    report = _report("xx...xx.", "xx......")
+    assert sorted(_kinds(report, segments.LANE_TRUTH)) == sorted(
+        [segments.KIND_CAUGHT, segments.KIND_MISSED]
+    )
+
+
+def test_the_missed_band_sits_where_the_defect_was():
+    report = _report("xx...xx.", "xx......")
+    missed = [b for b in segments.bands(report) if b["kind"] == segments.KIND_MISSED]
+    assert missed[0]["start"] == pytest.approx(0.5)
+
+
+def test_alarm_time_is_split_into_on_target_and_false():
+    """**예측 구간을 그대로 그리면 안 된다.**
+
+    전 구간에 알람을 켠 모델은 예측 구간이 하나뿐이라 화면상 «정답을 다 덮은 훌륭한 모델»로
+    보인다. 정답 위/밖으로 갈라 그려야 주황 띠가 화면을 덮어 한눈에 드러난다.
+    """
+    report = _report("..xx....xx....xx....", "x" * 20)
+    kinds = _kinds(report, segments.LANE_ALARM)
+    assert segments.KIND_FALSE in kinds and segments.KIND_ON_TARGET in kinds
+
+
+def test_a_model_that_shouts_paints_the_alarm_lane_orange():
+    report = _report("..xx....xx....xx....", "x" * 20)
+    false_width = sum(
+        b["end"] - b["start"] for b in segments.bands(report) if b["kind"] == segments.KIND_FALSE
+    )
+    on_width = sum(
+        b["end"] - b["start"]
+        for b in segments.bands(report) if b["kind"] == segments.KIND_ON_TARGET
+    )
+    assert false_width > on_width, "헛알람 띠가 결함 위 알람보다 넓어야 한다"
+
+
+def test_a_one_frame_segment_still_has_width_on_screen():
+    """시작과 끝이 같으면 폭 0이라 화면에서 **아예 안 보인다** — 놓친 자리가 사라진다."""
+    report = _report("...x....", "........")
+    band, = [b for b in segments.bands(report) if b["kind"] == segments.KIND_MISSED]
+    assert band["end"] > band["start"]
+
+
+def test_the_bar_width_matches_the_sampling_interval():
+    report = _report("...x....", "........", step=2.0)
+    band, = [b for b in segments.bands(report) if b["kind"] == segments.KIND_MISSED]
+    assert band["end"] - band["start"] == pytest.approx(2.0)
+
+
+def test_bands_carry_the_time_for_the_tooltip():
+    report = _report("..xx....", "..xx....")
+    assert all("초" in b["span"] for b in segments.bands(report))
+
+
+def test_a_video_with_nothing_to_show_gives_no_bands():
+    assert segments.bands(_report("........", "........")) == []
+
+
+def test_the_sampling_interval_ignores_a_single_odd_gap():
+    """프레임 하나가 빠져 간격이 벌어져도 대표 간격은 흔들리지 않아야 한다."""
+    assert segments.sampling_tick([0.0, 0.5, 1.0, 9.0, 9.5]) == pytest.approx(0.5)
+
+
+def test_the_sampling_interval_of_a_single_frame_is_zero():
+    assert segments.sampling_tick([1.0]) == 0.0
+
+
 # --- 프레임 지표도 같이 들고 있다 --------------------------------------------
 
 def test_frame_recall_is_still_reported():
@@ -343,3 +418,13 @@ def test_listing_videos_of_an_empty_log_is_not_an_error():
     import pandas as pd
 
     assert segments.videos_in(pd.DataFrame()) == []
+
+
+def test_the_screen_and_the_caption_agree_on_which_lane_is_on_top():
+    """화면은 «모델 알람»을 위에 그리는데 설명은 «위가 정답»이라고 하면 그림을 거꾸로 읽는다.
+
+    줄 이름은 두 모듈에 나뉘어 있으므로(판단은 `segments`, 그리기는 `ui`) 어긋나기 쉽다.
+    """
+    from vision_ai import ui
+
+    assert ui.LANE_ORDER == (segments.LANE_TRUTH, segments.LANE_ALARM)

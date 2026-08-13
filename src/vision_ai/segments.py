@@ -38,6 +38,14 @@ ALARM_FLOOD = 0.5
 # 프레임 재현율과 구간 재현율이 이만큼 벌어지면 «프레임 숫자만 보면 오해한다»고 말해 준다.
 NOTABLE_GAP = 0.15
 
+# 타임라인의 두 줄과 네 가지 띠 (V6). 이름이 곧 범례에 찍히므로 여기서 정한다.
+LANE_TRUTH = "정답 구간"
+LANE_ALARM = "모델 알람"
+KIND_CAUGHT = "잡음"
+KIND_MISSED = "놓침"
+KIND_ON_TARGET = "결함 위 알람"
+KIND_FALSE = "헛알람"
+
 
 @dataclass(frozen=True)
 class Segment:
@@ -113,6 +121,8 @@ class SegmentReport:
     frame_recall: float
     frame_precision: float
     duration_sec: float
+    on_target: tuple[Segment, ...] = ()      # 정답 위에서 울린 알람 구간
+    tick: float = 0.0                        # 표본 사이의 대표 간격(초)
     false_alarm_time_ratio: float = 0.0     # 정상인 시간 중 알람이 켜져 있던 비율
     min_hits: int = DEFAULT_MIN_HITS
 
@@ -181,6 +191,47 @@ class SegmentReport:
         return ""
 
 
+def bands(report: "SegmentReport", *, tick: float | None = None) -> list[dict]:
+    """타임라인에 그릴 띠 목록 (V6).
+
+    미탐이 **몇 건**인지보다 **영상의 어디서** 놓쳤는지가 다음에 무엇을 더 라벨링할지
+    정해 준다. 정답 줄과 모델 줄을 위아래로 놓으면 어긋난 자리가 눈에 바로 들어온다.
+
+    모델 줄에는 «예측 구간»을 그대로 그리지 않는다. 전 구간에 알람을 켠 모델은 예측 구간이
+    하나뿐이라 화면상 «정답을 다 덮은 훌륭한 모델»로 보인다. 대신 알람이 켜진 시간을 **정답
+    위 / 정답 밖**으로 갈라 그리면, 그 경우 주황 띠가 화면을 통째로 덮어 한눈에 드러난다.
+
+    `tick`은 한 장짜리 구간에 줄 최소 폭이다. 시작과 끝이 같으면 폭 0이라 아예 안 보인다.
+    """
+    tick = max(float(report.tick if tick is None else tick), 0.0)
+
+    def row(segment: Segment, lane: str, kind: str) -> dict:
+        return {
+            "lane": lane,
+            "kind": kind,
+            "start": float(segment.start_sec),
+            "end": float(segment.end_sec) + tick,
+            "span": segment.span_text(),
+        }
+
+    rows = [row(s, LANE_TRUTH, KIND_CAUGHT) for s in report.caught]
+    rows += [row(s, LANE_TRUTH, KIND_MISSED) for s in report.missed]
+    rows += [row(s, LANE_ALARM, KIND_ON_TARGET) for s in report.on_target]
+    rows += [row(s, LANE_ALARM, KIND_FALSE) for s in report.false_alarms]
+    return sorted(rows, key=lambda r: (r["lane"], r["start"]))
+
+
+def sampling_tick(seconds: Sequence[float]) -> float:
+    """표본 사이의 대표 간격. 한 장짜리 구간에 줄 폭으로 쓴다."""
+    if len(seconds) < 2:
+        return 0.0
+    gaps = [float(b) - float(a) for a, b in zip(seconds[:-1], seconds[1:]) if b > a]
+    if not gaps:
+        return 0.0
+    gaps.sort()
+    return gaps[len(gaps) // 2]
+
+
 def evaluate(
     truth: Sequence[bool],
     predicted: Sequence[bool],
@@ -217,6 +268,7 @@ def evaluate(
 
     missed = [s for s in truth_runs if (s.start, s.end) not in hit_at]
     wrong = [bool(p) and not bool(t) for t, p in zip(truth, predicted)]
+    right = [bool(p) and bool(t) for t, p in zip(truth, predicted)]
     false_alarms = [
         alarm for alarm in runs(wrong, seconds, gap=gap)
         if not _is_boundary_slop(alarm, truth_runs)
@@ -230,6 +282,8 @@ def evaluate(
         caught=tuple(caught),
         missed=tuple(missed),
         false_alarms=tuple(false_alarms),
+        on_target=tuple(runs(right, seconds, gap=gap)),
+        tick=sampling_tick(seconds),
         frame_recall=_ratio(
             sum(1 for t, p in zip(truth, predicted) if t and p), sum(1 for t in truth if t)
         ),

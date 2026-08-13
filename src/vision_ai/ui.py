@@ -826,3 +826,70 @@ def video_source(prefix: str):
         st.error(f"영상 파일이 아닙니다: `{candidate.suffix}`")
         return None
     return candidate
+
+
+# --- 정답과 판정을 겹쳐 보는 타임라인 (V6) -----------------------------------
+
+BAND_HEIGHT = 260
+"""두 줄짜리 비교 타임라인의 **전체** 높이(px).
+
+Streamlit은 이 값을 그림틀 전체 크기로 주고 Vega는 거기에 맞춰 줄인다. 축 눈금·축 제목·
+범례가 먼저 자리를 가져가고 **남은 만큼만** 띠가 그려진다. 150px으로 두었더니 남은 높이가
+두 줄을 담지 못해 **정답 줄과 모델 줄이 겹쳐 그려졌다** — 어긋난 자리를 보라고 만든 화면인데
+정작 두 줄이 한 줄로 포개졌다. 타임라인(`TIMELINE_HEIGHT`)에서 겪은 것과 같은 함정이다.
+"""
+
+# 색은 뜻에 고정한다. 실행할 때마다 바뀌면 «빨간 게 뭐였지»를 매번 다시 읽어야 한다.
+BAND_COLORS = {
+    "잡음": "#2e9e5b",          # 정답 구간을 잡았다
+    "놓침": "#d64545",          # 정답 구간인데 못 잡았다 — 여기가 다음에 볼 곳이다
+    "결함 위 알람": "#3b7dd8",   # 알람이 결함 위에서 울렸다
+    "헛알람": "#e08b2f",        # 결함이 아닌데 울렸다
+}
+
+
+LANE_ORDER = ("정답 구간", "모델 알람")
+"""위에서 아래로 놓는 순서. `segments.LANE_TRUTH`/`LANE_ALARM`과 같은 값이어야 한다."""
+
+
+def segment_timeline(bands, *, duration: float, key: str, width: int = 760) -> None:
+    """정답 구간과 모델 알람을 위아래 두 줄로 겹쳐 그린다.
+
+    끌어 고르는 기능은 없다 — 여기서 하는 일은 **되짚어 보는 것**이지 라벨링이 아니다.
+    조작이 없으면 클릭했다가 라벨이 바뀌는 사고도 없다.
+    """
+    if not bands:
+        st.caption("그릴 구간이 없습니다.")
+        return
+
+    kinds = [kind for kind in BAND_COLORS if any(b["kind"] == kind for b in bands)]
+    spec = {
+        "width": width,
+        "height": BAND_HEIGHT,
+        "data": {"values": list(bands)},
+        "mark": {"type": "bar", "height": 26, "cornerRadius": 3},
+        "encoding": {
+            "x": {
+                "field": "start", "type": "quantitative",
+                "scale": {"domain": [0, max(float(duration), 0.001)]},
+                "axis": {"title": "영상 시각 (초)"},
+            },
+            "x2": {"field": "end"},
+            # 줄 순서를 못 박는다. 그냥 두면 이름 순으로 정렬돼 «모델 알람»이 위로 올라가는데,
+            # 아래 설명이 «위가 정답»이라고 말하고 있으므로 화면과 글이 어긋난다.
+            "y": {
+                "field": "lane", "type": "nominal", "axis": {"title": None},
+                "sort": [LANE_ORDER[0], LANE_ORDER[1]],
+            },
+            "color": {
+                "field": "kind", "type": "nominal",
+                "scale": {"domain": kinds, "range": [BAND_COLORS[k] for k in kinds]},
+                "legend": {"title": None, "orient": "bottom"},
+            },
+            "tooltip": [
+                {"field": "kind", "type": "nominal", "title": "구분"},
+                {"field": "span", "type": "nominal", "title": "구간"},
+            ],
+        },
+    }
+    st.vega_lite_chart(spec, key=key, use_container_width=False)

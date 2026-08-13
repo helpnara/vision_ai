@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -60,15 +61,63 @@ def registry_path() -> Path:
     return config.DATA_HOME / REGISTRY_FILE
 
 
+# 한글 음절을 로마자로 옮기기 위한 자모 표 (문화관광부 로마자 표기법을 단순화한 것).
+# 음운 변화(자음 동화 등)는 적용하지 않는다 — 여기서 필요한 것은 «읽어서 알아볼 수 있는
+# 폴더 이름»이지 표기법 준수가 아니고, 규칙을 넣을수록 되돌려 읽기가 어려워진다.
+_INITIALS = (
+    "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj",
+    "ch", "k", "t", "p", "h",
+)
+_VOWELS = (
+    "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo",
+    "u", "wo", "we", "wi", "yu", "eu", "ui", "i",
+)
+_FINALS = (
+    "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lg", "lm", "lb", "ls", "lt",
+    "lp", "lh", "m", "b", "bs", "s", "ss", "ng", "j", "c", "k", "t", "p", "h",
+)
+_HANGUL_BASE = 0xAC00
+_HANGUL_COUNT = 11172
+
+SLUG_HASH_LEN = 4
+"""이름이 통째로 지워졌을 때 붙이는 짧은 해시 길이."""
+
+
+def romanize(text: str) -> str:
+    """한글 음절을 로마자로 옮긴다. 한글이 아닌 글자는 그대로 둔다.
+
+    «라인1 검사» → «rain1 geomsa». 완벽한 표기법은 아니지만 **폴더만 보고 어느 현장인지
+    알 수 있게** 하는 것이 목적이다.
+    """
+    out = []
+    for char in str(text):
+        index = ord(char) - _HANGUL_BASE
+        if 0 <= index < _HANGUL_COUNT:
+            out.append(_INITIALS[index // 588])
+            out.append(_VOWELS[(index % 588) // 28])
+            out.append(_FINALS[index % 28])
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 def slugify(name: str) -> str:
     """폴더 이름으로 쓸 수 있는 slug를 만든다.
 
-    한글 프로젝트명이 기본이라 그대로 폴더명으로 쓰면 OS·인코딩에 따라 문제가 생긴다.
-    영숫자와 하이픈만 남기고, 남는 게 없으면(한글만 있는 이름) 뒤에서 번호를 붙인다.
+    한글 프로젝트명이 기본인데 그대로 폴더명으로 쓰면 OS·인코딩에 따라 문제가 생긴다.
+    그렇다고 한글을 지워 버리면 **«라인1 검사»가 통째로 `project`가 되어** 폴더만 봐서는
+    어느 현장인지 알 수 없다. 프로젝트가 서너 개만 돼도 `project-2`, `project-3`이 쌓인다.
+
+    그래서 지우지 말고 **로마자로 옮긴다** — `rain1-geomsa`. 그래도 남는 것이 없으면
+    (한자·이모지만 있는 이름) 이름의 짧은 해시를 붙여 서로 구분되게 한다.
     """
-    text = unicodedata.normalize("NFKD", str(name)).strip().lower()
-    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    return text[:40] or SLUG_FALLBACK
+    label = str(name).strip()
+    text = unicodedata.normalize("NFKD", romanize(label)).lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")[:40].strip("-")
+    if text:
+        return text
+    digest = hashlib.sha1(label.encode("utf-8")).hexdigest()[:SLUG_HASH_LEN]
+    return f"{SLUG_FALLBACK}-{digest}" if label else SLUG_FALLBACK
 
 
 def _now() -> str:

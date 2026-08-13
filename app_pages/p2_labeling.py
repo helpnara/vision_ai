@@ -807,6 +807,32 @@ def _split_mode(resolved: pd.DataFrame) -> str:
     return mode
 
 
+def _split_gap(resolved: pd.DataFrame) -> None:
+    """분할이 배정되지 않은 장수를 밝힌다 (S4).
+
+    분할을 한 번 돌리고 나서 데이터를 더 모으면 새로 들어온 것은 배정 없이 남는다. 그 상태로
+    검출 학습 폴더를 내보내면 그만큼이 통째로 빠지는데, **이 화면은 그 사실을 말해 주지
+    않았다** — 내보내기 메시지를 읽고서야 알게 됐다.
+    """
+    gap = labeling.split_gap(resolved)
+    cols = st.columns(3)
+    cols[0].metric("전체", f"{gap.total:,}장")
+    cols[1].metric("분할 배정", f"{gap.assigned:,}장")
+    cols[2].metric(
+        "미배정", f"{gap.unassigned:,}장",
+        help="분할이 없는 이미지는 학습에도 평가에도 들어가지 않습니다.",
+    )
+
+    if gap.complete:
+        st.success(gap.message(), icon="✅")
+        return
+    text = f"{gap.message()} {gap.advice()}"
+    if gap.boxed_unassigned:
+        st.error(text, icon="🚨")
+    else:
+        st.warning(text, icon="✂️")
+
+
 def _split_tab(resolved: pd.DataFrame) -> None:
     st.markdown(
         "카테고리 × 라벨로 **층화 분할**한다. 층화하지 않으면 특정 카테고리나 결함 클래스가 "
@@ -869,6 +895,8 @@ def _split_tab(resolved: pd.DataFrame) -> None:
                 st.warning(f"매칭된 이미지가 없습니다 (실패 {unmatched:,}건). 컬럼과 파일명을 확인하세요.")
 
     st.divider()
+    _split_gap(resolved)
+
     current = resolved["split"].astype(str)
     if current.isin([config.SPLIT_TRAIN, config.SPLIT_VAL, config.SPLIT_TEST]).any():
         st.markdown("**현재 분할 결과**")

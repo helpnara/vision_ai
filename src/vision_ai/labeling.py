@@ -11,6 +11,7 @@ manifest(1단계 수집 사실)를 직접 수정하지 않고, 사람의 판정�
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -769,3 +770,94 @@ def review_queue(
         df = df[(labels == config.LABEL_DEFECT) & types.isin(unmapped)]
 
     return df.sort_values(["category", "image_id"]).reset_index(drop=True)
+
+
+# --- 분할이 데이터가 늘어난 것을 아는가 (S4) ---------------------------------
+
+@dataclass(frozen=True)
+class SplitGap:
+    """분할이 배정되지 않은 이미지가 얼마나 남았는가.
+
+    **분할을 한 번 돌리고 나서 데이터를 더 모으면, 새로 들어온 것들은 배정 없이 남는다.**
+    그 상태로 검출 내보내기를 하면 그 이미지들이 통째로 빠지는데, 화면 어디에도 «몇 장이
+    빠졌는지»가 안 나온다. 실측에서 마스크로 박스를 447장 만들어 놓고 그중 400장이
+    미배정이라 학습 폴더에 47장만 들어간 적이 있다 — 내보내기 메시지를 읽고서야 알았다.
+    """
+
+    total: int
+    assigned: int
+    labeled_unassigned: int
+    boxed_unassigned: int
+
+    @property
+    def unassigned(self) -> int:
+        return max(self.total - self.assigned, 0)
+
+    @property
+    def complete(self) -> bool:
+        return self.unassigned == 0
+
+    def message(self) -> str:
+        if self.complete:
+            return f"{self.total:,}장 모두 분할이 배정되어 있습니다."
+        return (
+            f"**{self.unassigned:,}장이 분할 미배정**입니다 "
+            f"(전체 {self.total:,}장 중 {self.assigned:,}장만 배정)."
+        )
+
+    def advice(self) -> str:
+        """무엇을 하면 되는지. 할 일이 없으면 빈 문자열."""
+        if self.complete:
+            return ""
+        if self.boxed_unassigned:
+            return (
+                f"이 중 **{self.boxed_unassigned:,}장에는 박스가 그려져 있습니다** — 지금 검출 "
+                "학습 폴더를 내보내면 그만큼이 통째로 빠집니다. 위에서 **층화 분할을 다시 "
+                "실행**하면 새로 들어온 것까지 배정됩니다."
+            )
+        if self.labeled_unassigned:
+            return (
+                f"이 중 **{self.labeled_unassigned:,}장은 라벨이 있어** 바로 학습에 쓸 수 "
+                "있습니다. 층화 분할을 다시 실행하세요."
+            )
+        return (
+            "미배정은 전부 미라벨 이미지입니다. 라벨을 먼저 붙이면 다음 분할에서 함께 "
+            "배정됩니다."
+        )
+
+
+def split_gap(resolved: pd.DataFrame, boxes: pd.DataFrame | None = None) -> SplitGap:
+    """분할 미배정 현황을 센다.
+
+    박스 표를 넘기지 않으면 저장된 것을 읽는다. **박스가 있는데 미배정인 장수**를 따로 세는
+    이유는, 그것이 검출 학습에서 조용히 사라지는 정확한 숫자이기 때문이다.
+    """
+    from . import boxes as box_store
+
+    if resolved is None or resolved.empty:
+        return SplitGap(total=0, assigned=0, labeled_unassigned=0, boxed_unassigned=0)
+
+    splits = resolved.get("split")
+    if splits is None:
+        assigned_mask = pd.Series(False, index=resolved.index)
+    else:
+        assigned_mask = splits.astype(str).isin(
+            [config.SPLIT_TRAIN, config.SPLIT_VAL, config.SPLIT_TEST]
+        )
+    pending = resolved[~assigned_mask]
+
+    labels = pending.get("label")
+    labeled = (
+        int((labels.astype(str) != config.LABEL_UNLABELED).sum()) if labels is not None else 0
+    )
+
+    frame = box_store.load() if boxes is None else boxes
+    with_boxes = set(frame["image_id"].astype(str)) if not frame.empty else set()
+    boxed = int(pending["image_id"].astype(str).isin(with_boxes).sum()) if with_boxes else 0
+
+    return SplitGap(
+        total=int(len(resolved)),
+        assigned=int(assigned_mask.sum()),
+        labeled_unassigned=labeled,
+        boxed_unassigned=boxed,
+    )

@@ -10,9 +10,16 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from vision_ai import config, projects, storage
+
+# AppTest에 넘기는 경로는 **절대경로**여야 한다. 상대경로는 Streamlit 버전에 따라
+# 기준이 달라진다 — 1.60에서는 실행 위치(cwd) 기준이었으나 이후 판에서는 호출한
+# 테스트 파일 위치 기준으로 바뀌어, "app.py"가 tests/app.py로 풀리며 전부 깨졌다.
+APP_PY = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
 
 
 @pytest.fixture
@@ -225,7 +232,7 @@ def test_registry_absolute_paths_are_rewritten(homes):
 def _app(homes):
     from streamlit.testing.v1 import AppTest
 
-    return AppTest.from_file("app.py")
+    return AppTest.from_file(APP_PY)
 
 
 def test_picker_shows_every_project(homes):

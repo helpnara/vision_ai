@@ -11,6 +11,7 @@ CSS는 ``data-testid``만 써야 한다. Streamlit의 ``st-emotion-cache-...`` �
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 from pathlib import Path
 
@@ -21,19 +22,24 @@ from streamlit.testing.v1 import AppTest
 
 from vision_ai import ui
 
+# AppTest에 넘기는 경로는 **절대경로**여야 한다. 상대경로는 Streamlit 버전에 따라
+# 기준이 달라진다 — 1.60에서는 실행 위치(cwd) 기준이었으나 이후 판에서는 호출한
+# 테스트 파일 위치 기준으로 바뀌어, "app.py"가 tests/app.py로 풀리며 전부 깨졌다.
+APP_PY = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
+
 
 # --- 레일 상태 -------------------------------------------------------------
 
 def test_rail_is_off_by_default():
     """처음 열면 단계 이름이 보여야 한다. 초보자가 아이콘만 보고 시작할 수는 없다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     assert ui.RAIL_KEY not in at.session_state
     assert all(link.label for link in _page_links(at))
 
 
 def test_toggle_switches_to_rail_and_back():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     at.sidebar.button[0].click().run()
     assert at.session_state[ui.RAIL_KEY] is True
@@ -48,7 +54,7 @@ def _page_links(at):
 
 
 def test_every_page_is_reachable_from_the_sidebar():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     labels = [link.label for link in _page_links(at)]
     assert "1. 데이터 수집" in labels
@@ -58,7 +64,7 @@ def test_every_page_is_reachable_from_the_sidebar():
 
 def test_rail_keeps_every_page_link():
     """접었을 때 링크가 사라지면 '현재 단계 확인'이라는 목적 자체가 없어진다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     before = len(_page_links(at))
     at.sidebar.button[0].click().run()
@@ -69,7 +75,7 @@ def test_rail_keeps_every_page_link():
 
 def test_rail_puts_the_step_name_in_a_tooltip():
     """라벨을 숨기는 대신 이름을 알 방법은 남겨둬야 한다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     at.sidebar.button[0].click().run()
     helps = [link.help for link in _page_links(at)]
@@ -78,7 +84,7 @@ def test_rail_puts_the_step_name_in_a_tooltip():
 
 def test_captions_are_dropped_in_rail_mode():
     """74px 폭에 두 줄짜리 설명을 밀어넣으면 읽을 수 없게 뭉갠다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     assert any("사내 데이터 미사용" in c.value for c in at.sidebar.caption)
     at.sidebar.button[0].click().run()
@@ -88,7 +94,7 @@ def test_captions_are_dropped_in_rail_mode():
 # --- CSS 규칙 --------------------------------------------------------------
 
 def test_rail_css_is_only_emitted_in_rail_mode():
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     expanded = "".join(m.value for m in at.main.markdown)
     assert "stSidebarResizeHandle" not in expanded
@@ -99,7 +105,7 @@ def test_rail_css_is_only_emitted_in_rail_mode():
 
 def test_density_css_is_always_applied():
     """글자를 줄여도 여백이 그대로면 화면에 들어오는 정보량은 그대로다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     css = "".join(m.value for m in at.main.markdown)
     assert "stMainBlockContainer" in css
@@ -139,7 +145,7 @@ def test_only_one_collapse_button_is_rendered():
 
 def test_the_toggle_keeps_its_key():
     """CSS가 st-key-* 로 이 버튼을 집어내므로 key가 바뀌면 자리 잡기가 통째로 깨진다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     assert at.sidebar.button[0].key == ui.TOGGLE_KEY
     assert f"st-key-{ui.TOGGLE_KEY}" in ui._NAV_CSS
@@ -147,7 +153,7 @@ def test_the_toggle_keeps_its_key():
 
 def test_the_toggle_has_no_text_label():
     """헤더 자리에 올라가므로 아이콘만 남아야 한다. 설명은 툴팁으로 준다."""
-    at = AppTest.from_file("app.py")
+    at = AppTest.from_file(APP_PY)
     at.run()
     button = at.sidebar.button[0]
     assert button.label == ""
@@ -296,7 +302,7 @@ def test_opening_a_page_does_no_heavy_work(page):
     """
     import time
 
-    at = AppTest.from_file("app.py", default_timeout=120)
+    at = AppTest.from_file(APP_PY, default_timeout=120)
     at.run()
     started = time.time()
     at.switch_page(page)

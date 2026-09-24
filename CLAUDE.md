@@ -176,8 +176,24 @@ V6 타임라인을 150px로 두었더니 **정답 줄과 모델 줄이 한 줄�
 
 ## 작업 습관
 
-* **브랜치**: `claude/stoic-albattani-qwcf61`에서 작업하고 거기로만 푸시한다.
-  배포본은 `claude/vision-surface-defect-detection-j16xhj`를 본다(README 배포표).
+* **브랜치**: `claude/stoic-albattani-qwcf61`에서 작업하고, **거기에 먼저 푸시한 뒤 배포
+  브랜치로 fast-forward 한다.** 배포본이 보는 것은 `claude/vision-surface-defect-detection-j16xhj`
+  다(README 배포표). 작업 브랜치에만 올리면 배포본에 반영되지 않는다.
+
+  ```bash
+  git push -u origin claude/stoic-albattani-qwcf61
+  # 갈라진 것이 없는지 먼저 본다 — 참이어야 fast-forward다
+  git merge-base --is-ancestor \
+      origin/claude/vision-surface-defect-detection-j16xhj \
+      origin/claude/stoic-albattani-qwcf61
+  git push origin claude/stoic-albattani-qwcf61:claude/vision-surface-defect-detection-j16xhj
+  git fetch origin && git branch -f claude/vision-surface-defect-detection-j16xhj \
+      origin/claude/vision-surface-defect-detection-j16xhj   # 로컬 참조도 맞춘다
+  ```
+
+  **되돌려 쓰는 일이 없도록 `--is-ancestor`가 참일 때만 민다.** 거짓이면 배포 브랜치에
+  작업 브랜치에 없는 커밋이 있다는 뜻이므로, 강제로 밀지 말고 무엇이 갈라졌는지 먼저 본다
+  (`git log --oneline 작업브랜치..배포브랜치`). 배포 브랜치에서 직접 작업하지 않는다.
 * **커밋 단위**: 항목 하나 = 커밋 하나. 제목은 `V6: 놓친 곳을 타임라인에서 되짚기`처럼
   **항목 번호 + 사용자가 얻는 것**으로 쓴다. 기존 로그의 결을 따른다.
 * **주석은 «왜»를 적는다.** 이 저장소는 «무엇을 하는가»보다 **«왜 그 값인가 · 무엇에 데였는가»**를

@@ -48,7 +48,7 @@ function inline(text: string): ReactNode {
     const tok = m[0];
     if (tok.startsWith("**")) parts.push(<strong key={k++}>{tok.slice(2, -2)}</strong>);
     else if (tok.startsWith("`")) parts.push(<code key={k++}>{tok.slice(1, -1)}</code>);
-    else parts.push(<s key={k++}>{tok.slice(2, -2)}</s>);
+    else parts.push(<s key={k++}>{inline(tok.slice(2, -2))}</s>);   // ~~ 안의 **굵게**도 푼다
     last = m.index + tok.length;
   }
   if (last < text.length) parts.push(text.slice(last));

@@ -456,6 +456,33 @@ def _fit_groups(keys, members, ratios) -> dict[str, int]:
     return placed
 
 
+USER_CSV_ENCODINGS = ("utf-8-sig", "cp949")
+"""사용자가 가져오는 CSV를 읽어 볼 인코딩 순서.
+
+이 앱이 쓰는 CSV는 전부 UTF-8이지만, **한국어 Windows 엑셀이 «CSV(쉼표로 분리)»로 저장하면
+cp949**다. UTF-8로만 읽으면 한글 열 이름·경로가 있는 순간 `UnicodeDecodeError`로 죽는다.
+`utf-8-sig`는 BOM이 있든 없든 UTF-8을 읽는다.
+"""
+
+
+def _read_user_csv(csv_source) -> pd.DataFrame:
+    """밖에서 들어온 CSV(경로·파일 객체)를 인코딩을 가려 읽는다."""
+    import io
+
+    if hasattr(csv_source, "read"):
+        raw = csv_source.read()
+    else:
+        raw = Path(csv_source).read_bytes()
+    if isinstance(raw, str):
+        return pd.read_csv(io.StringIO(raw))
+    for encoding in USER_CSV_ENCODINGS:
+        try:
+            return pd.read_csv(io.BytesIO(raw), encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("CSV 인코딩을 알 수 없습니다. UTF-8로 저장해 다시 올려 주세요.")
+
+
 def import_split_csv(csv_source, manifest: pd.DataFrame) -> tuple[dict[str, str], int]:
     """외부 CSV의 공식 분할 정의를 가져온다 (예: VisA `split_csv/1cls.csv`).
 
@@ -473,7 +500,7 @@ def import_split_csv(csv_source, manifest: pd.DataFrame) -> tuple[dict[str, str]
     Returns:
         (image_id → split 매핑, 매칭되지 않은 CSV 행 수)
     """
-    df = pd.read_csv(csv_source)
+    df = _read_user_csv(csv_source)
     lowered = {str(c).lower().strip(): c for c in df.columns}
 
     split_col = next((lowered[c] for c in ("split", "set", "subset", "phase") if c in lowered), None)

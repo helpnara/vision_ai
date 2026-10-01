@@ -32,7 +32,7 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
 | origin 동기화 | 작업·배포 브랜치 같은 커밋. 갈라진 것 없음 |
 | 실행 스택 | **FastAPI + React** (`python serve.py` → http://localhost:8000). Streamlit 코드는 제거됨 |
 | 설치된 판 | fastapi 0.142.2 · uvicorn 0.50.2 · pandas 3.0.6 · scikit-learn 1.9.1 · joblib 1.6.0 · Node 22 / vite 7 / react 19 |
-| 테스트 | **765 passed · 4 skipped = 769** |
+| 테스트 | **803 passed · 4 skipped = 807** |
 | 린트 | `ruff check .` 9건 (전부 기존 항목) |
 | 프런트 빌드 | `cd web && npm run build` 통과 (tsc + vite). 결과 `web/dist` 커밋됨 |
 | 앱 기동 | `python serve.py --no-browser` → `/api/health` ok, 6화면 모두 Playwright 스크린샷에서 콘솔 오류 0 |
@@ -60,6 +60,13 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
   `requirements.txt`가 바뀌었으면 자동으로 다시 깐다. 사용자의 다른 프로젝트(«느린 나이테»)와 같은 방식.
 * 제거한 것: `app.py` `app_pages/` `src/vision_ai/ui.py` `.streamlit/` `tests/test_ui.py`,
   `requirements.txt`의 streamlit. `guide.PAGE_*`는 웹 경로(`/ingest` …)를 가리킨다.
+
+### 2-0b. 10-02 — Windows PC에서 «데모 한 바퀴 만들기» 실패와 전수 조사
+
+PC(한국어 Windows)에서 데모가 «합성 샘플을 만들지 못했습니다»로 끝났다. Windows OpenCV가 한글 경로에서
+`cv2.imwrite`를 조용히 건너뛴 것이다. 같은 계열(리눅스에선 멀쩡, Windows에서만 조용히 깨짐)을 전수 조사해
+함께 고쳤다 — 목록과 재현 방법은 `tests/test_windows_compat.py` 독스트링 표, 규칙은 CLAUDE.md 함정 5번.
+Windows 실기에서는 돌려 보지 못했고, 리눅스에서 «Windows처럼 실패하는 가짜»를 끼워 확인했다.
 
 ### 2-1. 세션이 «기반 브랜치가 없다»며 못 열릴 때
 

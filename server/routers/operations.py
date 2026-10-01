@@ -43,7 +43,7 @@ from vision_ai import (
 )
 
 from .. import state
-from ..common import bad_request, jsonable, not_found, table
+from ..common import bad_request, inside, jsonable, not_found, table, typed_path, upload_name
 from ..jobs import runner
 
 router = APIRouter(prefix="/operations", tags=["operations"])
@@ -580,7 +580,7 @@ def _describe_video(path: Path) -> str:
 
 @router.get("/videos")
 def videos(scan: str = "") -> dict:
-    scan = scan.strip()
+    scan = typed_path(scan)
     found = video.listed(*([scan] if scan else []))
     return {
         "videos": [{"path": str(p), "label": _describe_video(p)} for p in found],
@@ -592,7 +592,7 @@ def videos(scan: str = "") -> dict:
 
 @router.post("/videos/upload")
 async def videos_upload(file: UploadFile = File(...)) -> dict:
-    name = Path(file.filename or "upload.mp4").name
+    name = upload_name(file.filename, "upload.mp4")
     if not video.is_video(name):
         raise bad_request(f"영상 파일이 아닙니다: `{Path(name).suffix}`")
     target = video.video_dir() / name
@@ -604,7 +604,7 @@ async def videos_upload(file: UploadFile = File(...)) -> dict:
 
 @router.get("/videos/check")
 def videos_check(path: str) -> dict:
-    candidate = Path(path).expanduser()
+    candidate = Path(typed_path(path)).expanduser()
     if not candidate.is_file():
         return {"ok": False, "error": f"파일을 찾을 수 없습니다: `{candidate}`"}
     if not video.is_video(candidate):
@@ -663,7 +663,7 @@ def playback_view(version: str | None = None) -> dict:
 def playback_find(source: str, version: str) -> dict:
     """이미 만들어 둔 판정본이 있으면 되찾아 온다. 화면을 새로 열 때마다 몇 분짜리 작업을
     다시 시키면 아무도 두 번 쓰지 않는다."""
-    result = playback.find(Path(source), version)
+    result = playback.find(Path(typed_path(source)).expanduser(), version)
     return {"result": _playback_block(result) if result is not None else None}
 
 
@@ -675,7 +675,7 @@ class PlaybackBody(BaseModel):
 
 @router.post("/playback/render")
 def playback_render(body: PlaybackBody) -> dict:
-    source = Path(body.source).expanduser()
+    source = Path(typed_path(body.source)).expanduser()
     if not source.is_file():
         raise bad_request(f"파일을 찾을 수 없습니다: `{source}`")
     try:
@@ -706,8 +706,7 @@ def playback_render(body: PlaybackBody) -> dict:
 def _judged_video(path: str) -> Path:
     """판정본 영상 경로 검사. 프로젝트 자료 폴더 안의 파일만 돌려준다."""
     target = Path(path).expanduser().resolve()
-    allowed = (config.DATA_HOME.resolve(), config.ARTIFACT_HOME.resolve())
-    if not any(str(target).startswith(str(root)) for root in allowed):
+    if not inside(target, (config.DATA_HOME, config.ARTIFACT_HOME)):
         raise not_found("프로젝트 폴더 밖의 파일은 열 수 없습니다")
     if not target.is_file():
         raise not_found(f"파일이 없습니다: {target}")

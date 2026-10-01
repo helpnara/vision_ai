@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -148,8 +150,11 @@ def test_data_yaml_declares_the_class_count(dataset, tmp_path):
 def test_data_yaml_points_at_an_absolute_root(dataset, tmp_path):
     """학습은 다른 폴더에서 실행되는 것이 보통이다. 상대경로면 못 찾는다."""
     _export(dataset, tmp_path)
-    text = (tmp_path / "det" / detection.DATA_FILE).read_text()
-    assert f"path: {(tmp_path / 'det').resolve()}" in text
+    yaml = pytest.importorskip("yaml")
+    parsed = yaml.safe_load((tmp_path / "det" / detection.DATA_FILE).read_text(encoding="utf-8"))
+    # 슬래시 경로로 쓴다 — Windows 경로의 `\\`·`#`·`: `가 YAML을 깨지 않게 (test_windows_compat)
+    assert parsed["path"] == (tmp_path / "det").resolve().as_posix()
+    assert Path(parsed["path"]).is_absolute()
 
 
 # --- 링크와 복사 -------------------------------------------------------------

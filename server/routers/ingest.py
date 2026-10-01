@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from vision_ai import boxes, config, datasets, framing, glossary, ingest, quality, storage, video
 
-from ..common import bad_request, counts, jsonable, not_found, table
+from ..common import bad_request, counts, jsonable, not_found, table, typed_path, upload_name
 from ..jobs import runner
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
@@ -113,8 +113,9 @@ def catalog() -> dict:
 # --- 📁 로컬 폴더 임포트 ----------------------------------------------------------
 
 def _folder_root(root: str) -> Path:
+    root = typed_path(root)
     path = Path(root).expanduser()
-    if not root.strip() or not path.is_dir():
+    if not root or not path.is_dir():
         raise not_found(f"폴더를 찾을 수 없습니다: `{path}`")
     return path
 
@@ -219,7 +220,7 @@ def list_videos(scan: str = Query("")) -> dict:
     **경로를 전부 타이핑하게 하면 안 된다.** 오타 하나로 실패하고, 무엇보다 어떤 영상이
     이미 올라와 있는지 화면에서 알 수가 없다.
     """
-    extra = scan.strip()
+    extra = typed_path(scan)
     found = video.listed(*([extra] if extra else []))
     return {
         "videos": [_video_entry(p) for p in found],
@@ -232,7 +233,7 @@ def list_videos(scan: str = Query("")) -> dict:
 @router.post("/videos/upload")
 async def upload_video(file: UploadFile = File(...)) -> dict:
     """영상을 프로젝트 영상 폴더에 저장한다. 다음부터는 목록에서 고를 수 있다."""
-    name = Path(file.filename or "upload.mp4").name
+    name = upload_name(file.filename, "upload.mp4")
     if not video.is_video(name):
         raise bad_request(f"영상 파일이 아닙니다: `{Path(name).suffix}`")
     target = video.video_dir() / name
@@ -246,7 +247,7 @@ async def upload_video(file: UploadFile = File(...)) -> dict:
 @router.get("/videos/check")
 def check_video(path: str) -> dict:
     """직접 입력한 경로가 쓸 수 있는 영상인지. 문장은 화면에 그대로 보인다."""
-    candidate = Path(path).expanduser()
+    candidate = Path(typed_path(path)).expanduser()
     if not candidate.is_file():
         raise not_found(f"파일을 찾을 수 없습니다: `{candidate}`")
     if not video.is_video(candidate):
@@ -268,7 +269,7 @@ def make_sample_video() -> dict:
 
 def _probe(path: str) -> video.VideoInfo:
     try:
-        info = video.probe(path)
+        info = video.probe(typed_path(path))
     except OSError as exc:
         raise bad_request(str(exc)) from exc
     if not info.usable:

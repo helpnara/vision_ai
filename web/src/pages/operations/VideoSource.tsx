@@ -27,7 +27,7 @@ export function VideoSource({ onChange }: { onChange: (path: string | null) => v
   const [picked, setPicked] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<{ path: string; message: string } | null>(null);
   const [entered, setEntered] = useState("");
-  const [check, setCheck] = useState<{ ok: boolean; error: string | null } | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; path?: string; error: string | null } | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -44,7 +44,7 @@ export function VideoSource({ onChange }: { onChange: (path: string | null) => v
   useEffect(() => {
     if (source !== SOURCE_PATH || !entered) { setCheck(null); return; }
     const t = window.setTimeout(() => {
-      get<{ ok: boolean; error: string | null }>(`/api/operations/videos/check?path=${encodeURIComponent(entered)}`).then(setCheck).catch(() => setCheck(null));
+      get<{ ok: boolean; path?: string; error: string | null }>(`/api/operations/videos/check?path=${encodeURIComponent(entered)}`).then(setCheck).catch(() => setCheck(null));
     }, 300);
     return () => window.clearTimeout(t);
   }, [source, entered]);
@@ -52,7 +52,7 @@ export function VideoSource({ onChange }: { onChange: (path: string | null) => v
   useEffect(() => {
     if (source === SOURCE_LIST) onChange(listing?.videos.length ? picked : null);
     else if (source === SOURCE_UPLOAD) onChange(uploaded?.path ?? null);
-    else if (source === SOURCE_PATH) onChange(check?.ok ? entered : null);
+    else if (source === SOURCE_PATH) onChange(check?.ok ? (check.path ?? entered) : null);
     else onChange(null);
   }, [source, picked, uploaded, check, entered, listing]); // eslint-disable-line react-hooks/exhaustive-deps
 

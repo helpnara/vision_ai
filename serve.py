@@ -24,7 +24,20 @@ def main() -> None:
     parser.add_argument("--reload", action="store_true", help="코드 변경 시 자동 재시작 (개발용)")
     args = parser.parse_args()
 
+    import socket
+
     import uvicorn
+
+    # 포트가 이미 쓰이고 있으면 uvicorn은 «[WinError 10048]» 한 줄만 남기고 끝난다.
+    # 무슨 뜻인지, 무엇을 하면 되는지를 먼저 말해 준다 (앱을 두 번 띄운 경우가 가장 흔하다).
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        if probe.connect_ex((args.host, args.port)) == 0:
+            print(
+                f"포트 {args.port}을(를) 이미 다른 프로그램이 쓰고 있습니다. "
+                f"앱이 이미 켜져 있다면 브라우저에서 http://localhost:{args.port} 을 여세요. "
+                f"다른 포트로 띄우려면:  run.bat 8501  (또는 python serve.py --port 8501)"
+            )
+            raise SystemExit(1)
 
     url = f"http://{args.host}:{args.port}"
     if not args.no_browser:

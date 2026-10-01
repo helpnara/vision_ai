@@ -44,6 +44,19 @@ def create_app() -> FastAPI:
         # 코어는 잘못된 입력을 ValueError로 말한다. 500이 아니라 400으로 화면에 전한다.
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    @app.exception_handler(OSError)
+    async def _os_error(_: Request, exc: OSError) -> JSONResponse:
+        # 파일을 못 읽고 못 쓴 것. 그냥 두면 화면에는 «500 Internal Server Error»만 보인다.
+        # Windows에서 가장 흔한 원인은 **다른 프로그램이 파일을 쥐고 있는 것**이다 —
+        # manifest.csv·labels.csv를 엑셀로 열어 두면 앱이 그 파일에 쓰지 못한다(WinError 32).
+        message = str(exc) or exc.__class__.__name__
+        if isinstance(exc, PermissionError):
+            message = (
+                f"파일을 쓸 수 없습니다 — 다른 프로그램(엑셀·탐색기 미리보기·재생 중인 영상 등)이 "
+                f"열고 있는지 확인하고 닫은 뒤 다시 시도하세요. ({message})"
+            )
+        return JSONResponse(status_code=500, content={"detail": message})
+
     @app.get("/api/health")
     def health() -> dict:
         return {"ok": True, "project": projects.active().slug}

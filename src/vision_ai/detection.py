@@ -34,6 +34,8 @@ YOLO 계열이 공통으로 읽는 배치다. `data.yaml`이 클래스 이름과
 
 from __future__ import annotations
 
+import json
+
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -231,7 +233,9 @@ def _data_yaml(root: Path, classes: list[str]) -> str:
     lines = [
         "# vision_ai가 만든 검출 학습 설정",
         "# 클래스 번호는 boxes.csv의 클래스 이름을 정렬한 순서다.",
-        f"path: {root.resolve()}",
+        # 따옴표 + 슬래시로 쓴다. Windows 경로(`C:\\Users\\…`)를 그대로 두면 `#`·`: `가 든
+        # 폴더 이름에서 YAML이 깨지고, 학습 도구는 슬래시 경로를 어느 OS에서나 읽는다.
+        f"path: {json.dumps(root.resolve().as_posix(), ensure_ascii=False)}",
         f"train: {IMAGES_DIR}/train",
         f"val: {IMAGES_DIR}/val",
         f"test: {IMAGES_DIR}/test",

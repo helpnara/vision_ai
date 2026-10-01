@@ -137,11 +137,14 @@ def save(cache: FeatureCache) -> None:
 
 
 def clear() -> None:
-    """캐시를 지운다. 다음 학습 때 다시 계산된다."""
+    """캐시를 지운다. 다음 학습 때 다시 계산된다. 못 지우면 OSError — 화면이 그 사실을 말한다.
+
+    예전에는 실패를 삼켰다. Windows에서 파일이 잠겨 있으면 «비웠습니다»라고 해 놓고 그대로였다.
+    """
     try:
         cache_path().unlink(missing_ok=True)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise OSError(f"특징 캐시를 지우지 못했습니다 (사용 중일 수 있습니다): {exc}") from exc
 
 
 def summary() -> dict:

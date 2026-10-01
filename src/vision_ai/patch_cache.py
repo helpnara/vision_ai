@@ -188,9 +188,9 @@ def save(cache: PatchCache) -> None:
     total = len(keep) + len(cache.fresh)
     folder = cache_dir(cache.schema)
 
+    temporary = folder / f"{DATA_NAME}.{os.getpid()}.tmp.npy"
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        temporary = folder / f"{DATA_NAME}.{os.getpid()}.tmp.npy"
         target = np.lib.format.open_memmap(
             temporary, mode="w+", dtype=STORED_DTYPE, shape=(total, *cache.shape)
         )
@@ -207,24 +207,36 @@ def save(cache: PatchCache) -> None:
         target.flush()
         del target
 
+        # 옛 배열을 **먼저 닫는다.** 열어 둔 memmap 위로 os.replace 하면 Windows는
+        # PermissionError(WinError 32)를 낸다 — 아래 except가 그것을 조용히 삼켜 캐시가
+        # 영영 갱신되지 않고, 수백 MB짜리 .tmp.npy만 실행할 때마다 쌓였다 (fsutil 독스트링).
+        cache.stored = None
         os.replace(temporary, folder / DATA_NAME)
         (folder / INDEX_NAME).write_text(
             json.dumps({"shape": list(cache.shape), "rows": index}), encoding="utf-8"
         )
     except (OSError, ValueError):
         return
+    finally:
+        temporary.unlink(missing_ok=True)   # 성공했으면 이미 옮겨져 없다
+
+    # 저장한 것을 다시 열어 둔다 — 호출한 쪽이 같은 cache를 계속 써도 맞는 값을 본다.
+    cache.rows = index
+    cache.stored = np.load(folder / DATA_NAME, mmap_mode="r")
+    cache.fresh.clear()
+    cache.fresh_stamps.clear()
 
 
 def clear(anomaly_config=None) -> None:
-    """캐시를 지운다. 설정을 주면 그 설정 것만, 안 주면 전부."""
-    import shutil
+    """캐시를 지운다. 설정을 주면 그 설정 것만, 안 주면 전부. 다 못 지우면 OSError."""
+    from . import fsutil
 
     root = config.cache_dir() / PATCHES_DIR
     target = cache_dir(schema_fingerprint(anomaly_config)) if anomaly_config else root
-    try:
-        shutil.rmtree(target, ignore_errors=True)
-    except OSError:
-        pass
+    # 예전에는 ignore_errors=True 라, Windows에서 학습 중(memmap이 열린 동안)에 누르면
+    # 아무 말 없이 반쯤만 지워지고 화면의 «저장된 이미지» 숫자는 그대로였다.
+    if not fsutil.remove_tree(target):
+        raise OSError("격자 캐시가 사용 중이라 다 지우지 못했습니다. 학습이 끝난 뒤 다시 누르세요.")
 
 
 def summary() -> dict:

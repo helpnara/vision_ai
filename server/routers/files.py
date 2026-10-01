@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 
 from vision_ai import config, storage, video, viz
 
-from ..common import not_found
+from ..common import inside, not_found
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -81,8 +81,7 @@ def file_at(path: str, w: int = Query(THUMB_WIDTH, ge=0, le=MAX_WIDTH)) -> Respo
     아무 경로나 열어 주지 않는다 — 프로젝트 자료 폴더 안의 파일만 돌려준다.
     """
     target = Path(path).expanduser().resolve()
-    allowed = (config.DATA_HOME.resolve(), config.ARTIFACT_HOME.resolve())
-    if not any(str(target).startswith(str(root)) for root in allowed):
+    if not inside(target, (config.DATA_HOME, config.ARTIFACT_HOME)):
         raise not_found("프로젝트 폴더 밖의 파일은 열 수 없습니다")
     if not target.is_file():
         raise not_found(f"파일이 없습니다: {target}")

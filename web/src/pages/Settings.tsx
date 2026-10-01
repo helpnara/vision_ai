@@ -18,6 +18,7 @@ export function Settings() {
   const [values, setValues] = useState<Values | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [notice, setNotice] = useState<{ kind: "success" | "warning" | "error"; text: string } | null>(null);
+  const [cacheNotice, setCacheNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => { if (data) { setValues(data.values); setPreview(data.preview); } }, [data]);
   // 슬라이더를 움직이면 미리보기가 따라 움직여야 판단할 수 있다 (300ms 디바운스).
@@ -39,6 +40,14 @@ export function Settings() {
       setData(got);
       setNotice(got.clamped ? { kind: "warning", text: "일부 값이 허용 범위를 벗어나 잘렸습니다." } : { kind: "success", text: "저장했습니다. 3·4단계가 이 기준으로 판단합니다." });
     } catch (e) { setNotice({ kind: "error", text: (e as Error).message }); }
+  };
+  // 캐시 비우기는 실패할 수 있다 — Windows에서 학습 중이면 파일이 잠겨 있다. 실패를 삼키면
+  // «비웠습니다»처럼 보이는데 숫자는 그대로라 사용자가 무엇이 잘못됐는지 알 수 없다.
+  const clearCache = async (url: string) => {
+    try {
+      setData(await post<SettingsPayload>(url));
+      setCacheNotice({ kind: "success", text: "비웠습니다. 다음 학습에서 다시 계산합니다." });
+    } catch (e) { setCacheNotice({ kind: "error", text: (e as Error).message }); }
   };
   const reset = async () => { setData(await post<SettingsPayload>("/api/settings/reset")); setNotice({ kind: "success", text: "기본값으로 되돌렸습니다." }); };
 
@@ -107,7 +116,7 @@ export function Settings() {
       <Cols n={3}>
         <Metric label="저장된 이미지" value={`${fmt.int(data.cache.features.count)}장`} />
         <Metric label="파일 크기" value={`${data.cache.features.size_mb.toFixed(1)} MB`} />
-        <div style={{ paddingTop: "0.8rem" }}><Button disabled={data.cache.features.count === 0} onClick={() => post<SettingsPayload>("/api/settings/cache/clear").then(setData)}>🗑️ 캐시 비우기</Button></div>
+        <div style={{ paddingTop: "0.8rem" }}><Button disabled={data.cache.features.count === 0} onClick={() => void clearCache("/api/settings/cache/clear")}>🗑️ 캐시 비우기</Button></div>
       </Cols>
       <Caption>{`저장 위치: \`${data.cache.features.path}\``}</Caption>
       <div><strong>이상탐지용 (격자 31×31마다 숫자 14개)</strong></div>
@@ -115,8 +124,9 @@ export function Settings() {
       <Cols n={3}>
         <Metric label="저장된 이미지" value={`${fmt.int(data.cache.patches.count)}장`} />
         <Metric label="파일 크기" value={`${data.cache.patches.size_mb.toFixed(0)} MB`} help={`설정 ${data.cache.patches.variants}종`} />
-        <div style={{ paddingTop: "0.8rem" }}><Button disabled={data.cache.patches.count === 0} onClick={() => post<SettingsPayload>("/api/settings/cache/patches/clear").then(setData)}>🗑️ 격자 캐시 비우기</Button></div>
+        <div style={{ paddingTop: "0.8rem" }}><Button disabled={data.cache.patches.count === 0} onClick={() => void clearCache("/api/settings/cache/patches/clear")}>🗑️ 격자 캐시 비우기</Button></div>
       </Cols>
+      {cacheNotice ? <Alert kind={cacheNotice.kind}>{cacheNotice.text}</Alert> : null}
       <span style={{ display: "none" }}>{project.version}{String(reload)}</span>
     </>
   );

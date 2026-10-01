@@ -2,6 +2,7 @@
 # macOS / Linux 용 — Windows 는 setup.bat 을 더블클릭한다.
 set -e
 cd "$(dirname "$0")"
+export PYTHONUTF8=1
 echo "[1/3] 파이썬 확인"
 PY=$(command -v python3 || command -v python || true)
 if [ -z "$PY" ]; then echo "파이썬 3.10 이상을 설치하세요."; exit 1; fi

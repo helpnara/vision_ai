@@ -7,7 +7,9 @@ pandas가 돌려주는 값은 그대로 JSON이 되지 않는다 — NaN은 JSON
 from __future__ import annotations
 
 import math
-from typing import Any
+import os
+from pathlib import Path
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -99,3 +101,44 @@ def bad_request(message: str) -> HTTPException:
 
 def not_found(message: str) -> HTTPException:
     return HTTPException(status_code=404, detail=str(message))
+
+
+def inside(target: Path, roots: Iterable[Path]) -> bool:
+    """`target`이 `roots` 중 하나의 안쪽인가 (화면이 넘긴 경로로 아무 파일이나 열지 않게).
+
+    문자열 `startswith`로 보면 두 가지가 샌다. `…/data_backup`이 `…/data`로 시작해 통과하고,
+    Windows에서는 대소문자(`C:\\` vs `c:\\`)가 달라 정상 경로가 막힌다. 그래서 정규화해 비교한다.
+    """
+    resolved = os.path.normcase(str(Path(target).expanduser().resolve()))
+    for root in roots:
+        base = os.path.normcase(str(Path(root).resolve()))
+        try:
+            if os.path.commonpath([resolved, base]) == base:
+                return True
+        except ValueError:      # Windows: 드라이브가 다르면 commonpath가 ValueError
+            continue
+    return False
+
+
+def upload_name(filename: str | None, default: str) -> str:
+    """브라우저가 보낸 파일 이름을 저장해도 되는 한 조각으로 다듬는다 (경로 성분·금지 문자 제거)."""
+    from vision_ai import fsutil
+
+    base = Path(str(filename or "").replace("\\", "/")).name
+    return fsutil.safe_name(base, fallback=default)
+
+
+_QUOTES = ('"', "'", "\u201c", "\u201d", "\u2018", "\u2019")
+
+
+def typed_path(text: str | None) -> str:
+    """사용자가 친(붙여 넣은) 경로 문자열을 다듬는다.
+
+    Windows 탐색기의 **«경로로 복사»는 경로를 큰따옴표로 감싸 준다** (`"C:\\data\\VisA"`).
+    그대로 쓰면 따옴표까지 폴더 이름으로 읽혀 «폴더를 찾을 수 없습니다»가 된다. 앞뒤 공백과
+    감싼 따옴표를 벗긴다 — 경로 안쪽의 글자는 건드리지 않는다.
+    """
+    value = str(text or "").strip()
+    while len(value) >= 2 and value[0] in _QUOTES and value[-1] in _QUOTES:
+        value = value[1:-1].strip()
+    return value

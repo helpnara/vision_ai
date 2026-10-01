@@ -2,6 +2,9 @@
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+rem 파이썬을 UTF-8 모드로 돌린다. 한국어 Windows의 기본 인코딩(cp949)이 끼어들지 않게 한다.
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 title 표면 결함 탐지 파이프라인 — 설치
 
 echo ============================================================

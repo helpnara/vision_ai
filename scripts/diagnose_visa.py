@@ -25,7 +25,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from vision_ai import models, viz  # noqa: E402
+from vision_ai import cvio, models, viz  # noqa: E402
 
 
 def mask_areas(root: Path, rows: pd.DataFrame) -> np.ndarray:
@@ -34,7 +34,7 @@ def mask_areas(root: Path, rows: pd.DataFrame) -> np.ndarray:
 
     values = []
     for path in rows[rows["mask"].notna()]["mask"]:
-        mask = cv2.imread(str(root / path), cv2.IMREAD_GRAYSCALE)
+        mask = cvio.read_image(root / path, cv2.IMREAD_GRAYSCALE)
         if mask is not None:
             values.append(float((mask > 0).mean()))
     return np.asarray(values)

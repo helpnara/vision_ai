@@ -155,12 +155,12 @@ def probe(path) -> VideoInfo:
     """영상 메타데이터를 읽는다. 열 수 없으면 OSError."""
     import cv2
 
+    from . import cvio
+
     path = Path(path).expanduser()
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        capture.release()
-        raise OSError(f"영상을 열 수 없습니다: {path}")
-    try:
+    with cvio.video_capture(path) as capture:   # 한글 경로 대응 (cvio 독스트링)
+        if not capture.isOpened():
+            raise OSError(f"영상을 열 수 없습니다: {path}")
         return VideoInfo(
             path=path,
             fps=float(capture.get(cv2.CAP_PROP_FPS) or 0.0),
@@ -168,8 +168,6 @@ def probe(path) -> VideoInfo:
             width=int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0),
             height=int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0),
         )
-    finally:
-        capture.release()
 
 
 # --- 몇 장을 뽑을 것인가 -----------------------------------------------------
@@ -334,51 +332,60 @@ def extract(
     메모리에 모아 두지 않고 **한 장씩 바로 저장한다.** 1080p 프레임 하나가 비압축 6MB라
     3,000장을 들고 있으면 18GB다.
     """
-    import cv2
-
     path = Path(path).expanduser()
     stride = max(1, int(stride))
     identifier = video_id(path)
     out_dir = Path(out_dir) if out_dir else config.raw_dir() / "video" / identifier
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    capture = cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        capture.release()
-        raise OSError(f"영상을 열 수 없습니다: {path}")
+    from . import cvio
+
+    with cvio.video_capture(path) as capture:   # 한글 경로 대응 (cvio 독스트링)
+        if not capture.isOpened():
+            raise OSError(f"영상을 열 수 없습니다: {path}")
+        result = _extract_frames(
+            capture, out_dir, ExtractResult(video_id=identifier), stride=stride,
+            min_change=min_change, check_quality=check_quality,
+            max_consecutive_drops=max_consecutive_drops, limit=limit, progress=progress,
+        )
+    return result
+
+
+def _extract_frames(capture, out_dir: Path, result: "ExtractResult", *, stride, min_change,
+                    check_quality, max_consecutive_drops, limit, progress) -> "ExtractResult":
+    """열린 영상에서 프레임을 뽑아 `out_dir`에 쓴다. `extract()`의 본체."""
+    import cv2
+
+    from . import cvio
 
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    result = ExtractResult(video_id=identifier)
     previous: np.ndarray | None = None
     dropped_in_a_row = 0
     index = 0
 
-    try:
-        while True:
-            if not capture.grab():        # 디코딩 없이 다음 프레임으로
-                break
-            if index % stride == 0:
-                ok, frame = capture.retrieve()
-                if ok and frame is not None:
-                    result.scanned += 1
-                    keep, previous = _decide(frame, previous, min_change, check_quality, result)
-                    if not keep and dropped_in_a_row + 1 >= max_consecutive_drops:
-                        # 지표가 이 장면에 안 맞는 것이다. 조용히 전멸하느니 한 장 남긴다.
-                        keep, previous = True, _thumb(frame)
-                        result.dropped_similar -= 1
-                        result.forced += 1
-                    dropped_in_a_row = 0 if keep else dropped_in_a_row + 1
-                    if keep:
-                        target = out_dir / f"{index:08d}.jpg"
-                        cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-                        result.saved.append(target)
-                        if limit is not None and result.kept >= limit:
-                            break
-            index += 1
-            if progress is not None and total:
-                progress(min(index, total), total)
-    finally:
-        capture.release()
+    while True:
+        if not capture.grab():        # 디코딩 없이 다음 프레임으로
+            break
+        if index % stride == 0:
+            ok, frame = capture.retrieve()
+            if ok and frame is not None:
+                result.scanned += 1
+                keep, previous = _decide(frame, previous, min_change, check_quality, result)
+                if not keep and dropped_in_a_row + 1 >= max_consecutive_drops:
+                    # 지표가 이 장면에 안 맞는 것이다. 조용히 전멸하느니 한 장 남긴다.
+                    keep, previous = True, _thumb(frame)
+                    result.dropped_similar -= 1
+                    result.forced += 1
+                dropped_in_a_row = 0 if keep else dropped_in_a_row + 1
+                if keep:
+                    target = out_dir / f"{index:08d}.jpg"
+                    cvio.write_image(target, frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                    result.saved.append(target)
+                    if limit is not None and result.kept >= limit:
+                        break
+        index += 1
+        if progress is not None and total:
+            progress(min(index, total), total)
 
     if progress is not None and total:
         progress(total, total)
@@ -448,9 +455,12 @@ def make_sample(
     path = Path(path) if path else config.interim_dir() / "video" / "sample.mp4"
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    from . import cvio
+
     width, height = size
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    writer = cvio.VideoWriter(path, "mp4v", fps, size)   # 한글 경로 대응 (cvio 독스트링)
     if not writer.isOpened():
+        writer.release()
         raise OSError("영상을 만들 수 없습니다 (코덱을 쓸 수 없음).")
 
     rng = np.random.default_rng(seed)

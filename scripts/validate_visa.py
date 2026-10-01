@@ -37,7 +37,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from vision_ai import evaluate, models, viz  # noqa: E402
+from vision_ai import cvio, evaluate, models, viz  # noqa: E402
 
 TARGET_RECALL = 0.95
 
@@ -82,7 +82,7 @@ def localization(model: models.PatchAnomalyModel, root: Path, rows: pd.DataFrame
     subset = rows[rows["mask"].notna()].head(limit)
     for _, row in subset.iterrows():
         image = viz.load_rgb(str(root / row["image"]))
-        mask = cv2.imread(str(root / row["mask"]), cv2.IMREAD_GRAYSCALE)
+        mask = cvio.read_image(root / row["mask"], cv2.IMREAD_GRAYSCALE)
         if image is None or mask is None:
             continue
         result = evaluate.localization_metrics(model.score_map(image), mask)

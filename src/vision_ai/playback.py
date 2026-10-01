@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import json
-import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from . import config, viz
+from . import config, cvio, fsutil, viz
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -303,13 +303,25 @@ def find(source, version: str) -> Playback | None:
     if not root.is_dir():
         return None
     wanted = str(source)
+    matches: list[tuple[float, Playback]] = []
     for candidate in sorted(root.iterdir()):
         if not candidate.is_dir():
             continue
         made = load(candidate)
         if made is not None and made.source == wanted and made.version == version:
-            return made
-    return None
+            try:
+                stamp = (candidate / META_FILE).stat().st_mtime
+            except OSError:
+                stamp = 0.0
+            matches.append((stamp, made))
+    if not matches:
+        return None
+    # 같은 영상×버전이 둘 이상이면 옛 폴더를 못 지운 것이다(render 참고). 가장 최근 것을 보인다.
+    matches.sort(key=lambda pair: pair[0])
+    newest = matches[-1][1]
+    for _, stale in matches[:-1]:
+        fsutil.remove_tree(stale.directory)       # 이제는 놓였을 수 있다 — 안 되면 다음 기회에
+    return newest
 
 
 # --- 열지도 → 박스 -----------------------------------------------------------
@@ -470,7 +482,7 @@ def _open_writer(directory: Path, size: tuple[int, int], fps: float):
     """재생 가능한 코덱부터 차례로 시도한다. 되는 것이 나오면 그것으로 쓴다."""
     for fourcc, suffix, mime, playable in CODECS:
         path = directory / f"{VIDEO_STEM}{suffix}"
-        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*fourcc), fps, size)
+        writer = cvio.VideoWriter(path, fourcc, fps, size)   # 한글 경로 대응 (cvio 독스트링)
         if writer.isOpened():
             return writer, path, mime, playable
         writer.release()
@@ -541,32 +553,42 @@ def render(
     if not source.exists():
         raise FileNotFoundError(f"영상을 찾을 수 없습니다: {source}")
 
-    capture = cv2.VideoCapture(str(source))
-    if not capture.isOpened():
-        raise RuntimeError(f"영상을 열 수 없습니다: {source}")
+    with cvio.video_capture(source) as capture:   # 한글 경로 대응 (cvio 독스트링)
+        if not capture.isOpened():
+            raise RuntimeError(f"영상을 열 수 없습니다: {source}")
+        return _render_from(capture, source, model, directory=directory, limit=limit,
+                            threshold=threshold, stills=stills, progress=progress)
+
+
+def _render_from(capture, source: Path, model, *, directory, limit, threshold, stills, progress):
+    """열린 영상으로 판정본을 만든다. `render()`의 본체."""
+    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    source_fps = source_fps if 1.0 <= source_fps <= 240.0 else 30.0
+    stride = plan_stride(total, limit)
+
+    target = directory or output_dir(source, getattr(model, "version", ""))
+    target = Path(target)
+    # 지난 판정본이 섞이면 무엇을 보는지 모르게 된다 — 그래서 지운다. 다만 Windows에서는
+    # **브라우저가 그 영상을 재생하는 중이면 지울 수 없다**(WinError 32). 그때는 옆에 새 폴더를
+    # 만들어 쓰고, `find()`가 가장 최근 것을 고른다. 남은 옛 폴더는 다음에 지운다.
+    if target.exists() and not fsutil.remove_tree(target):
+        target = target.with_name(f"{target.name}__{time.strftime('%Y%m%d-%H%M%S')}")
+    (target / STILL_DIR).mkdir(parents=True, exist_ok=True)
+
+    writer = None
+    video_path = target / f"{VIDEO_STEM}.webm"
+    mime, playable = "video/webm", True
+    judged_frames: list[Judged] = []
+    # 대표 장면은 **다 훑어 본 뒤에야** 고를 수 있다. 그렇다고 완성된 프레임을 통째로
+    # 들고 있으면 150장에 300MB가 넘는다. JPEG로 눌러 두면 20MB 남짓이고, 고른 장면은
+    # 그 바이트를 그대로 파일에 쓰면 되니 다시 풀 일도 없다.
+    encoded: list[bytes] = []
+    expected = plan_count(total, stride, limit)
+
     try:
-        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
-        source_fps = source_fps if 1.0 <= source_fps <= 240.0 else 30.0
-        stride = plan_stride(total, limit)
-
-        target = directory or output_dir(source, getattr(model, "version", ""))
-        target = Path(target)
-        if target.exists():
-            shutil.rmtree(target)                 # 지난 판정본이 섞이면 무엇을 보는지 모르게 된다
-        (target / STILL_DIR).mkdir(parents=True, exist_ok=True)
-
-        writer = None
-        video_path = target / f"{VIDEO_STEM}.webm"
-        mime, playable = "video/webm", True
-        judged_frames: list[Judged] = []
-        # 대표 장면은 **다 훑어 본 뒤에야** 고를 수 있다. 그렇다고 완성된 프레임을 통째로
-        # 들고 있으면 150장에 300MB가 넘는다. JPEG로 눌러 두면 20MB 남짓이고, 고른 장면은
-        # 그 바이트를 그대로 파일에 쓰면 되니 다시 풀 일도 없다.
-        encoded: list[bytes] = []
-        expected = plan_count(total, stride, limit)
-
-        for index, bgr in _sampled(capture, stride, limit):
+        frames = _sampled(capture, stride, limit)
+        for index, bgr in frames:
             rgb = viz.to_rgb(bgr)
             score = float(model.score_image(rgb))
             used = float(threshold) if threshold is not None else float(model.threshold)
@@ -599,11 +621,9 @@ def render(
             encoded.append(buffer.tobytes() if ok else b"")
             if progress is not None:
                 progress(len(judged_frames), max(expected, len(judged_frames)))
-
-        if writer is not None:
-            writer.release()
     finally:
-        capture.release()
+        if writer is not None:
+            writer.release()   # 도중에 실패해도 임시 파일을 남기지 않는다
 
     playback = Playback(
         directory=target,

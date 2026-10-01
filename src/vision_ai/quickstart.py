@@ -80,16 +80,26 @@ def run(
     config.ensure_dirs()
 
     step(1)
-    folder = ingest.generate_synthetic(
-        n_normal=n_normal, n_defect=n_defect, layout="visa", seed=seed
-    )
+    # 실패 사유를 반드시 함께 말한다. 예전에는 «합성 샘플을 만들지 못했습니다» 한 줄뿐이라,
+    # Windows 한글 경로에서 OpenCV가 조용히 쓰기를 건너뛴 것(cvio 독스트링)을 알 길이 없었다.
+    try:
+        folder = ingest.generate_synthetic(
+            n_normal=n_normal, n_defect=n_defect, layout="visa", seed=seed
+        )
+    except OSError as exc:
+        result.warnings.append(f"합성 샘플을 만들지 못했습니다 — {exc}")
+        return result
 
     step(2)
     ingest.ingest_folder(Path(folder), source="synthetic", layout="visa")
     manifest = storage.load_manifest()
     result.n_images = len(manifest)
     if manifest.empty:
-        result.warnings.append("합성 샘플을 만들지 못했습니다.")
+        written = ingest.count_image_files(Path(folder)) if Path(folder).is_dir() else 0
+        result.warnings.append(
+            f"합성 샘플을 만들지 못했습니다 — `{folder}`에 이미지가 {written}장 생겼고 "
+            "등록된 것은 없습니다. 폴더에 쓸 권한이 있는지 확인하세요."
+        )
         return result
 
     step(3)

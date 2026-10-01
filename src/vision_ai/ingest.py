@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Sequence
@@ -16,7 +15,7 @@ from typing import TYPE_CHECKING, Callable, Iterator, Sequence
 import cv2
 import numpy as np
 
-from . import config, datasets, quality, storage
+from . import config, cvio, datasets, fsutil, quality, storage
 
 if TYPE_CHECKING:
     from . import video as video_module
@@ -169,7 +168,9 @@ def ingest_uploads(
     source: str = "upload",
 ) -> IngestResult:
     """업로드된 이미지를 data/raw/<source>/<category>/ 에 저장하고 등록한다."""
-    target_dir = config.raw_dir() / source / (category or "uncategorized")
+    # 카테고리는 사용자가 친 글자 그대로 manifest에 남기되, 폴더 이름은 Windows에서 쓸 수 있게
+    # 다듬는다 (`컵:빨강`의 `:`, `a/b`의 `/`는 폴더 이름이 될 수 없다 — fsutil 독스트링).
+    target_dir = config.raw_dir() / fsutil.safe_name(source) / fsutil.safe_name(category or "uncategorized")
     target_dir.mkdir(parents=True, exist_ok=True)
 
     result = IngestResult()
@@ -415,8 +416,11 @@ def generate_synthetic(
 
     categories = tuple(categories or SURFACE_STYLES.keys())
     out_dir = Path(out_dir) if out_dir else config.raw_dir() / SYNTHETIC_SOURCE
-    if overwrite and out_dir.exists():
-        shutil.rmtree(out_dir)
+    if overwrite and out_dir.exists() and not fsutil.remove_tree(out_dir):
+        raise OSError(
+            f"지난 합성 샘플 폴더를 지우지 못했습니다: {out_dir} — 탐색기나 이미지 뷰어로 "
+            "열어 둔 파일이 있으면 닫고 다시 시도하세요."
+        )
 
     rng = np.random.default_rng(seed)
     per_defect = max(1, n_defect // len(SYNTHETIC_DEFECTS))
@@ -432,7 +436,7 @@ def generate_synthetic(
                 directory.mkdir(parents=True, exist_ok=True)
 
             for i in range(n_normal):
-                cv2.imwrite(str(normal_dir / f"{i:04d}.png"), _make_surface(rng, style, size))
+                cvio.write_image(str(normal_dir / f"{i:04d}.png"), _make_surface(rng, style, size))
 
             # VisA는 결함 유형을 폴더로 나누지 않는다 — 한 폴더에 모아 쓴다
             index = 0
@@ -440,8 +444,8 @@ def generate_synthetic(
                 for _ in range(per_defect):
                     surface = _make_surface(rng, style, size)
                     image, mask = _draw_defect(rng, surface, defect)
-                    cv2.imwrite(str(anomaly_dir / f"{index:04d}.png"), image)
-                    cv2.imwrite(str(mask_dir / f"{index:04d}.png"), mask)
+                    cvio.write_image(str(anomaly_dir / f"{index:04d}.png"), image)
+                    cvio.write_image(str(mask_dir / f"{index:04d}.png"), mask)
                     index += 1
             continue
 
@@ -456,7 +460,7 @@ def generate_synthetic(
         for i in range(n_normal):
             surface = _make_surface(rng, style, size)
             target = test_good if i < n_test_normal else train_good
-            cv2.imwrite(str(target / f"{i:04d}.png"), surface)
+            cvio.write_image(str(target / f"{i:04d}.png"), surface)
 
         for defect in SYNTHETIC_DEFECTS:
             defect_dir = out_dir / category / "test" / defect
@@ -466,8 +470,8 @@ def generate_synthetic(
             for i in range(per_defect):
                 surface = _make_surface(rng, style, size)
                 image, mask = _draw_defect(rng, surface, defect)
-                cv2.imwrite(str(defect_dir / f"{i:04d}.png"), image)
-                cv2.imwrite(str(truth_dir / f"{i:04d}_mask.png"), mask)
+                cvio.write_image(str(defect_dir / f"{i:04d}.png"), image)
+                cvio.write_image(str(truth_dir / f"{i:04d}_mask.png"), mask)
 
     return out_dir
 

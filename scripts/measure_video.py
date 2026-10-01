@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from vision_ai import video  # noqa: E402
+from vision_ai import cvio, video  # noqa: E402
 
 
 REPEATS = 3
@@ -58,27 +58,21 @@ def _time(function, *, repeats: int = REPEATS) -> tuple[float, object]:
 
 
 def _grab_only(path: Path) -> int:
-    import cv2
-
-    capture = cv2.VideoCapture(str(path))
-    count = 0
-    while capture.grab():
-        count += 1
-    capture.release()
+    with cvio.video_capture(path) as capture:
+        count = 0
+        while capture.grab():
+            count += 1
     return count
 
 
 def _read_all(path: Path) -> int:
-    import cv2
-
-    capture = cv2.VideoCapture(str(path))
-    count = 0
-    while True:
-        ok, _ = capture.read()
-        if not ok:
-            break
-        count += 1
-    capture.release()
+    with cvio.video_capture(path) as capture:
+        count = 0
+        while True:
+            ok, _ = capture.read()
+            if not ok:
+                break
+            count += 1
     return count
 
 
@@ -91,18 +85,17 @@ def _stride_decoding_everything(path: Path, stride: int) -> int:
     """
     import cv2
 
-    capture = cv2.VideoCapture(str(path))
-    kept = 0
-    index = 0
-    while True:
-        ok, frame = capture.read()          # 건너뛸 프레임도 전부 디코딩한다
-        if not ok:
-            break
-        if index % stride == 0 and frame is not None:
-            cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, video.JPEG_QUALITY])
-            kept += 1
-        index += 1
-    capture.release()
+    with cvio.video_capture(path) as capture:
+        kept = 0
+        index = 0
+        while True:
+            ok, frame = capture.read()          # 건너뛸 프레임도 전부 디코딩한다
+            if not ok:
+                break
+            if index % stride == 0 and frame is not None:
+                cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, video.JPEG_QUALITY])
+                kept += 1
+            index += 1
     return kept
 
 

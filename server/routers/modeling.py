@@ -770,7 +770,9 @@ def heatmap_info(image_id: str) -> dict:
                 "note": "정답 마스크가 없어 위치 정확도는 계산할 수 없습니다."}
     import cv2
 
-    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    from vision_ai import cvio
+
+    mask = cvio.read_image(mask_path, cv2.IMREAD_GRAYSCALE)   # 한글 경로 대응
     if mask is None:
         return {"image_id": image_id, "localization": None, "note": None}
     scores = evaluate.localization_metrics(entry["heatmap"], mask)

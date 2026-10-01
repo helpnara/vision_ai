@@ -10,16 +10,9 @@
 
 from __future__ import annotations
 
-import pathlib
-
 import pytest
 
 from vision_ai import config, projects, storage
-
-# AppTest에 넘기는 경로는 **절대경로**여야 한다. 상대경로는 Streamlit 버전에 따라
-# 기준이 달라진다 — 1.60에서는 실행 위치(cwd) 기준이었으나 이후 판에서는 호출한
-# 테스트 파일 위치 기준으로 바뀌어, "app.py"가 tests/app.py로 풀리며 전부 깨졌다.
-APP_PY = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
 
 
 @pytest.fixture
@@ -227,51 +220,42 @@ def test_registry_absolute_paths_are_rewritten(homes):
     assert resolved is not None and resolved.exists()
 
 
-# --- 화면의 프로젝트 선택 상자 ----------------------------------------------
+# --- 화면의 프로젝트 목록 (웹 API) ------------------------------------------
+#
+# 예전에는 Streamlit AppTest로 사이드바 선택 상자를 눌러 봤다. 지금 화면은 React라
+# 파이썬에서 누를 수 없으므로, 선택 상자가 읽고 쓰는 API 배선을 대신 본다.
+# «설정에서 만든 프로젝트에서 도로 튕겨 나온다»던 증상은 서버가 진실을 하나(파일)만
+# 들고 화면이 매번 그것을 읽는 구조라 생길 수 없다 — 목록 응답의 active가 곧 진실이다.
 
-def _app(homes):
-    from streamlit.testing.v1 import AppTest
+def _client(homes):
+    from fastapi.testclient import TestClient
 
-    return AppTest.from_file(APP_PY)
+    from server import state
+    from server.main import app
+
+    state.clear()
+    return TestClient(app)
 
 
 def test_picker_shows_every_project(homes):
     projects.create("가라인")
     projects.create("나라인")
-    at = _app(homes)
-    at.run()
-    assert not at.exception
-    assert len(at.sidebar.selectbox[0].options) == 3
+    body = _client(homes).get("/api/projects").json()
+    assert len(body["projects"]) == 3
 
 
 def test_picker_follows_a_change_made_elsewhere(homes):
-    """프로젝트는 사이드바와 설정 화면 **두 곳**에서 바뀐다.
-
-    설정에서 새 프로젝트를 만들면 파일은 새 것을 가리키는데 선택 상자의 세션 값은 옛
-    것으로 남는다. 그 차이를 "사용자가 옛 것을 골랐다"로 오해하면 **방금 만든 프로젝트에서
-    도로 튕겨 나온다.** 실제로 그 증상이 있었다.
-    """
-    at = _app(homes)
-    at.run()
-    assert at.sidebar.selectbox[0].value == config.DEFAULT_PROJECT
+    """프로젝트는 사이드바와 설정 화면 **두 곳**에서 바뀐다. 어디서 바꾸든 목록의 active가 따라온다."""
+    client = _client(homes)
+    assert client.get("/api/projects").json()["active"] == config.DEFAULT_PROJECT
 
     made = projects.create("설정에서 만든 것")   # 화면 밖에서 바뀐 상황
-    at.run()
-    assert at.sidebar.selectbox[0].value == made.slug
+    assert client.get("/api/projects").json()["active"] == made.slug
     assert projects.active().slug == made.slug, "만든 프로젝트에서 튕겨 나왔다"
 
 
 def test_choosing_another_project_switches_to_it(homes):
     other = projects.create("나라인", activate=False)
-    at = _app(homes)
-    at.run()
-    at.sidebar.selectbox[0].set_value(other.slug).run()
+    body = _client(homes).post("/api/projects/use", json={"slug": other.slug}).json()
+    assert body["active"] == other.slug
     assert projects.active().slug == other.slug
-
-
-def test_picker_is_hidden_in_rail_mode(homes):
-    """74px 폭에 선택 상자를 밀어넣으면 읽을 수 없게 뭉갠다. 머리글자만 남긴다."""
-    at = _app(homes)
-    at.run()
-    at.sidebar.button[0].click().run()          # 레일로 접기
-    assert not at.sidebar.selectbox

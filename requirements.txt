@@ -5,10 +5,14 @@
 # (-headless를 쓰므로 packages.txt로 apt 패키지를 따로 깔 필요가 없다.)
 #
 # 하한만 지정해 두었다. 배포를 고정하고 싶으면 아래 "검증된 조합"으로 == 고정할 것.
-#   streamlit 1.60.0 / pandas 3.0.5 / numpy 2.4.6 / pillow 12.3.0 /
-#   opencv-python-headless 5.0.0.93 / scikit-learn 1.9.0 / joblib 1.5.3 /
+#   fastapi 0.142.2 / uvicorn 0.50.2 / pandas 3.0.6 / numpy 2.4.6 / pillow 12.3.0 /
+#   opencv-python-headless 5.0.0.93 / scikit-learn 1.9.1 / joblib 1.6.0 /
 #   anthropic 0.120.2  (Python 3.11.15에서 전체 테스트 통과)
-streamlit>=1.60
+
+# 웹 서버 (python serve.py). 화면(web/dist)은 빌드된 채로 저장소에 있어 Node가 필요 없다.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
 pandas>=2.2
 numpy>=1.26
 pillow>=10.0

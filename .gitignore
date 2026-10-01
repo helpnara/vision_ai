@@ -19,3 +19,6 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# 배포 zip (scripts/package_release.py 가 만든다 — 저장소에 넣지 않는다)
+release/

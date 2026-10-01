@@ -325,6 +325,7 @@ PYTHONPATH=src python -m pytest tests/ -q
 |------|-----|
 | Repository | `helpnara/vision_ai` |
 | Branch | `claude/vision-surface-defect-detection-j16xhj` (배포본이 보는 브랜치) |
+| 배포 파일 | `느린 눈-YYYYMMDD-vNN.zip` — `scripts/package_release.py`가 만든다. 기록은 `docs/releases.md` |
 | 진입점 | `python serve.py` (`uvicorn server.main:app`) |
 | Python version | 3.11 (3.10 이상이면 동작) · Node.js는 화면 코드를 고칠 때만 |
 | 환경변수 | `ANTHROPIC_API_KEY` (선택) |

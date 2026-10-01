@@ -65,14 +65,20 @@ PYTHONPATH=src python scripts/analyze_visa_results.py # 해석 (불량률별 환
 
 ## 실행
 
+**Windows**: 저장소를 내려받아 풀고 `setup.bat`(처음 한 번) → `run.bat`을 더블클릭한다.
+**macOS / Linux**: `./setup.sh` → `./run.sh`.
+
 ```bash
-pip install -r requirements.txt
+# 손으로 할 때 (bat/sh 가 하는 일이 이것이다)
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
 python serve.py            # http://localhost:8000 이 브라우저에서 열린다
 ```
 
-화면(`web/dist`)은 **빌드된 채로 저장소에 들어 있다.** 그래서 Node.js 없이 파이썬만 있으면 된다 —
-저장소를 내려받아 덮어쓰고 위 두 줄을 실행하면 끝이다. 포트를 바꾸려면 `--port 8501`,
-원격·CI에서는 `--no-browser`.
+화면(`web/dist`)은 **빌드된 채로 저장소에 들어 있다.** 그래서 Node.js 없이 파이썬 3.10 이상만
+있으면 된다. `setup.bat`은 폴더 안에 가상환경(`.venv`)을 만들어 패키지를 깔고, `run.bat`은 그
+가상환경으로 서버를 띄운다. **새 판을 덮어쓴 뒤에는 `run.bat`만 다시 실행하면 된다** — 의존성이
+바뀌었으면 알아서 다시 깐다(`requirements.txt`와 `.venv/installed-requirements.txt`를 비교).
+포트를 바꾸려면 `run.bat 8501`, 원격·CI에서는 `python serve.py --no-browser`.
 
 홈 화면이 **지금 어디까지 왔고 다음에 무엇을 할지** 알려주므로, 순서를 몰라도 따라갈 수 있다.
 지표는 핵심만 캡션으로 바로 보이고 나머지는 `?`에 있으며, 평가 결과에는 **다음에 할 일**이 함께 나온다.

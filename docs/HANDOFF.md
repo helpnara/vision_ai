@@ -56,6 +56,8 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
   좌표는 여전히 원본 픽셀 기준이고 확대(`zoomTo`)·눈금 문구(`zoomNote`)도 옮겼다.
 * 화면 6개는 작업자 4명이 병렬로 옮겼고(탭별 파일), 한국어 문구·help·«왜» 주석은 원문 그대로다.
   각 화면은 `tests/test_api_<화면>.py` 배선 테스트와 Playwright 스크린샷으로 확인했다.
+* `setup.bat`/`run.bat`(Windows)·`setup.sh`/`run.sh`(macOS/Linux)로 더블클릭 설치·실행. run은
+  `requirements.txt`가 바뀌었으면 자동으로 다시 깐다. 사용자의 다른 프로젝트(«느린 나이테»)와 같은 방식.
 * 제거한 것: `app.py` `app_pages/` `src/vision_ai/ui.py` `.streamlit/` `tests/test_ui.py`,
   `requirements.txt`의 streamlit. `guide.PAGE_*`는 웹 경로(`/ingest` …)를 가리킨다.
 

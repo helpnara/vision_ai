@@ -2,7 +2,7 @@
  * 공용 화면 조각. Streamlit의 st.metric / st.success / st.tabs / st.dataframe … 에 해당한다.
  * 모든 화면이 이것만 쓰면 모양이 어긋나지 않는다.
  */
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { Table } from "../api";
 
 // --- 글 ---------------------------------------------------------------------
@@ -148,6 +148,14 @@ export function useTab(count: number, initial = 0): [number, (i: number) => void
     return n >= 0 && n < count ? n : initial;
   };
   const [active, setActive] = useState(fromHash);
+  // 링크로 특정 탭을 열 수 있어야 한다 (`/modeling#tab=1`). 마운트 때만 읽으면 해시만 바뀌는
+  // 이동에서 탭이 안 바뀐다 — 안내문의 «3단계 → 이상탐지 탭» 링크가 그 경우다.
+  useEffect(() => {
+    const onHash = () => setActive(fromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count]);
   const change = (i: number) => {
     setActive(i);
     window.history.replaceState(null, "", `#tab=${i}`);

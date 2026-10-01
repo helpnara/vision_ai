@@ -39,7 +39,7 @@ def segment_timeline(bands: Sequence[dict], *, duration: float, width: int = 760
         return None
     kinds = [kind for kind in BAND_COLORS if any(b["kind"] == kind for b in bands)]
     return {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "width": width,
         "height": BAND_HEIGHT,
         "data": {"values": list(bands)},
@@ -74,7 +74,7 @@ def line_chart(rows: Sequence[dict], *, x: str, ys: Sequence[str], x_title: str 
     if not rows:
         return None
     return {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "width": "container",
         "height": height,
         "data": {"values": list(rows)},

@@ -1,8 +1,9 @@
 # 인수인계 (HANDOFF)
 
-> 마지막 갱신: 2026-09-19
+> 마지막 갱신: 2026-10-01
 > 작업 브랜치: `claude/stoic-albattani-qwcf61`
 > 배포 브랜치: `claude/vision-surface-defect-detection-j16xhj` (README 배포표 기준. 지금 두 브랜치는 같은 커밋)
+> ⚠️ 새 세션이 **배포 브랜치가 체크아웃된 채로** 열릴 수 있다 — 아래 «2-1» 참조
 
 이 문서는 **세션이 끊겼을 때 처음부터 다시 파악하지 않기 위한 것**이다.
 "무엇을 하려는 앱인가"는 [`README.md`](../README.md), "왜 그렇게 정했는가"는
@@ -20,20 +21,41 @@
 
 ---
 
-## 2. 지금 상태 (2026-09-19 실측)
+## 2. 지금 상태 (2026-10-01 실측)
 
 | 확인 항목 | 결과 |
 |---|---|
 | 작업 트리 | 깨끗함 (`git status` 비어 있음) |
-| origin 동기화 | `claude/stoic-albattani-qwcf61`와 **0 ahead / 0 behind** |
-| 최신 커밋 | `2267af1` S4·S1: 분할 미배정 표시와 한글 프로젝트 폴더 이름 |
-| 테스트 | **790 passed · 4 skipped** (합계 794 — 직전 세션 기준과 일치) |
+| origin 동기화 | 작업·배포 브랜치 모두 `fabbfff`로 같은 커밋. 갈라진 것 없음 |
+| 최신 커밋 | `fabbfff` docs: 배포 브랜치까지 미는 절차를 작업 습관에 적는다 |
+| 설치된 판 | streamlit 1.64.0 · pandas 3.0.6 · scikit-learn 1.9.1 · joblib 1.6.0 (9-19와 동일) |
+| 테스트 | **790 passed · 4 skipped** (합계 794 — 기준과 일치) |
+| 린트 | `ruff check .` 12건 (전부 기존 항목, 기준과 일치) |
 | 앱 기동 | `streamlit run app.py` → HTTP 200, `/_stcore/health` = `ok`, 로그에 예외 없음 |
+| 검증 데이터 | 없음 — `data/`·`artifacts/`는 컨테이너와 함께 사라졌다 (§4) |
 
-건너뛴 4건은 전부 `tests/test_cnn_features.py`의 «사전학습 모델 파일이 없습니다 (선택 기능)»다.
-45MB 가중치를 받지 않은 환경에서는 정상이며 실패가 아니다.
+### 2-1. 세션이 «기반 브랜치가 없다»며 못 열릴 때
 
-### 이번 세션에서 고친 것 (커밋 `test: AppTest 경로를 저장소 루트에 고정`)
+9-15 세션이 끝난 뒤 앱에서 이어 열자 **«The requested branch or commit was not found …
+이 세션의 기반이 된 브랜치가 더 이상 존재하지 않아요»** 가 떠서 세션을 새로 만들어야 했다.
+새 세션은 작업 브랜치가 아니라 **배포 브랜치 `claude/vision-surface-defect-detection-j16xhj`가
+체크아웃된 상태**로 열렸고, 로컬에는 그 브랜치 하나만 있었다.
+
+원격에는 두 브랜치가 **둘 다 같은 커밋으로 살아 있었다** — 잃은 커밋은 없다. 그러니 이 메시지를
+보면 코드를 의심하지 말고 아래만 하면 된다:
+
+```bash
+git fetch origin claude/stoic-albattani-qwcf61
+git branch --track claude/stoic-albattani-qwcf61 origin/claude/stoic-albattani-qwcf61
+git checkout claude/stoic-albattani-qwcf61
+# 갈라진 게 없는지 — 0이어야 한다
+git log --oneline origin/claude/stoic-albattani-qwcf61..origin/claude/vision-surface-defect-detection-j16xhj | wc -l
+```
+
+이후 푸시는 CLAUDE.md «작업 습관»대로 작업 브랜치 → 배포 브랜치 fast-forward 순서다.
+세션이 배포 브랜치를 기반으로 열렸더라도 **배포 브랜치에서 직접 커밋하지 않는다.**
+
+### 2-2. 9-19 세션에서 고친 것 (커밋 `test: AppTest 경로를 저장소 루트에 고정`)
 
 컨테이너를 새로 받으면 **테스트 20개가 `FileNotFoundError`로 죽는다.** 코드 회귀가 아니라
 **의존성 판올림**이 원인이었다.

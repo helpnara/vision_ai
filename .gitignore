@@ -16,9 +16,6 @@ venv/
 .mypy_cache/
 .ipynb_checkpoints/
 
-# Streamlit
-.streamlit/secrets.toml
-
 # OS
 .DS_Store
 Thumbs.db

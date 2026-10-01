@@ -30,7 +30,13 @@ const RAIL_KEY = "nav_rail";
 
 export function Layout() {
   const [rail, setRail] = useState<boolean>(() => {
-    try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; }
+    // 폰 폭에서는 펼친 사이드바(260px)가 본문을 거의 다 덮는다. 처음에는 레일로 연다
+    // (Streamlit 시절 initial_sidebar_state="auto" 와 같은 판단). 사용자가 바꾼 값은 기억한다.
+    const narrow = window.matchMedia("(max-width: 640px)").matches;
+    try {
+      const saved = localStorage.getItem(RAIL_KEY);
+      return saved === null ? narrow : saved === "1";
+    } catch { return narrow; }
   });
   const [listing, setListing] = useState<ProjectListing | null>(null);
   const [version, setVersion] = useState(0);
@@ -83,7 +89,8 @@ export function Layout() {
             </>
           )}
         </aside>
-        <main className="main" key={version}>
+        <main className="main" key={version}
+          onClickCapture={() => { if (!rail && window.matchMedia("(max-width: 640px)").matches) toggle(); }}>
           <Outlet />
         </main>
       </div>

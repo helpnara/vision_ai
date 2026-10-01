@@ -98,7 +98,10 @@ def file_at(path: str, w: int = Query(THUMB_WIDTH, ge=0, le=MAX_WIDTH)) -> Respo
 def video_file(path: str) -> FileResponse:
     """영상 파일 그대로 (브라우저 `<video>`용). 재생 가능 여부는 코덱에 달렸다 (playback.CODECS)."""
     target = Path(path).expanduser()
-    if not target.is_file() or not video.is_video(target):
+    # 판정본은 WebM(VP8)으로 만든다 (playback.CODECS — 브라우저가 mp4v를 못 틀기 때문).
+    # video.VIDEO_EXTENSIONS 는 «입력으로 받는 영상»의 목록이라 .webm 이 없다. 여기서 더한다.
+    playable = video.is_video(target) or target.suffix.lower() == ".webm"
+    if not target.is_file() or not playable:
         raise not_found(f"영상 파일이 없습니다: {target}")
     media = "video/webm" if target.suffix.lower() == ".webm" else "video/mp4"
     return FileResponse(target, media_type=media)

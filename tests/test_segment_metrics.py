@@ -423,8 +423,21 @@ def test_listing_videos_of_an_empty_log_is_not_an_error():
 def test_the_screen_and_the_caption_agree_on_which_lane_is_on_top():
     """화면은 «모델 알람»을 위에 그리는데 설명은 «위가 정답»이라고 하면 그림을 거꾸로 읽는다.
 
-    줄 이름은 두 모듈에 나뉘어 있으므로(판단은 `segments`, 그리기는 `ui`) 어긋나기 쉽다.
+    줄 이름은 두 모듈에 나뉘어 있으므로(판단은 `segments`, 그리기는 `charts`) 어긋나기 쉽다.
     """
-    from vision_ai import ui
+    from vision_ai import charts
 
-    assert ui.LANE_ORDER == (segments.LANE_TRUTH, segments.LANE_ALARM)
+    assert charts.LANE_ORDER == (segments.LANE_TRUTH, segments.LANE_ALARM)
+
+
+def test_the_timeline_spec_pins_the_lane_order_and_the_measured_height():
+    """정렬을 안 정하면 이름 순으로 «모델 알람»이 위로 간다. 높이는 두 줄이 겹치지 않게 실측한 값."""
+    from vision_ai import charts
+
+    spec = charts.segment_timeline(
+        [{"kind": "놓침", "lane": segments.LANE_TRUTH, "start": 0.0, "end": 2.0, "span": "0~2초"}],
+        duration=10.0,
+    )
+    assert spec["encoding"]["y"]["sort"] == list(charts.LANE_ORDER)
+    assert spec["height"] == charts.BAND_HEIGHT == 260
+    assert charts.segment_timeline([], duration=10.0) is None

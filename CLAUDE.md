@@ -12,27 +12,30 @@
 
 ```bash
 # 의존성 (새 컨테이너는 비어 있다 — 테스트 전에 반드시)
-pip install -r requirements.txt pytest ruff
+pip install -r requirements.txt pytest ruff httpx
 
-# 테스트 전체 (기준: 790 passed · 4 skipped = 794)
+# 테스트 전체 (기준: 765 passed · 4 skipped = 769)
 python -m pytest -q
 
 # 한 파일 / 한 개
 python -m pytest tests/test_segment_metrics.py -q
-python -m pytest tests/test_ui.py -q -k rail
+python -m pytest tests/test_api_labeling.py -q -k queue
 
-# 앱 기동
-streamlit run app.py                                    # 브라우저에서 열림
-streamlit run app.py --server.port 8501 --server.headless true   # 원격/CI
+# 앱 기동 (화면은 web/dist 에 빌드돼 있어 Node 없이 뜬다)
+python serve.py                                   # 브라우저에서 열림 (8000)
+python serve.py --no-browser --port 8000          # 원격/CI
 
 # 기동 확인 (프록시 환경이므로 --noproxy 를 붙여야 로컬에 닿는다)
-curl -s --noproxy '*' http://localhost:8501/_stcore/health   # → ok
+curl -s --noproxy '*' http://localhost:8000/api/health   # → {"ok":true,"project":"default"}
+
+# 화면 코드를 고쳤을 때만 — 빌드 결과(web/dist)를 함께 커밋한다
+cd web && npm install && npm run build            # tsc --noEmit + vite build
 
 # 린트
 ruff check .
 ```
 
-`ruff check .`는 지금 **12건이 남아 있다**(미사용 import·f-string·모호한 변수명 `l`).
+`ruff check .`는 지금 **9건이 남아 있다**(미사용 import·f-string·모호한 변수명 `l`).
 전부 기존 항목이고 기능에 영향이 없어 손대지 않았다. **새로 건드린 파일에서 이 수가 늘지
 않는지만 보면 된다** — 특정 파일만 보려면 `ruff check <파일>`.
 
@@ -51,30 +54,36 @@ PYTHONPATH=src python scripts/measure_video.py <영상>
 
 ## 코드 구조
 
-UI와 코어 로직을 갈라 둔다. **`src/vision_ai/`에는 Streamlit을 부르지 않는다** — 그래야
-테스트가 화면 없이 돈다. 화면은 `app_pages/`에서만 조립한다.
+UI와 코어 로직을 갈라 둔다. **`src/vision_ai/`는 화면을 모른다** (FastAPI도 React도 import하지
+않는다) — 그래야 테스트가 화면 없이 돈다. 화면은 `server/`(JSON API)와 `web/`(React)에서만 조립한다.
+2026-10 에 Streamlit을 떠나 이 구조로 옮겼다 — 규약은 [`docs/web-migration.md`](docs/web-migration.md).
 
 ```
-app.py              진입점. src/를 sys.path에 넣고 st.navigation으로 6화면을 묶는다
-app_pages/          단계별 화면 (home, p1_ingest … p5_settings)
-src/vision_ai/      코어 로직 (Streamlit 의존 없음)
-tests/              pytest. conftest.py의 sandbox 픽스처가 경로를 tmp_path로 돌린다
+serve.py            진입점. uvicorn으로 server.main:app 을 띄우고 브라우저를 연다
+server/             FastAPI — 코어를 부르고 JSON으로 바꾸는 얇은 층. 판단 로직을 두지 않는다
+  routers/          화면 하나 = 라우터 하나 (projects home ingest labeling modeling operations settings files jobs)
+  jobs.py           긴 작업(학습·추출·추론·영상)을 스레드로 돌리고 진행률을 준다. 워커는 1개
+  state.py          예전 st.session_state 자리 — 마지막 학습 결과·배치 추론 특징 (프로젝트 바꾸면 비운다)
+  common.py         DataFrame → JSON (NaN→null). 응답에 pandas 값을 그대로 넣지 말 것
+web/                React + TypeScript (Vite). pages/ 화면 · components/ 공용 조각 · api.ts hooks.ts
+  dist/             빌드 결과 — git 추적. PC에서 Node 없이 python serve.py 만으로 돌게 하기 위해
+src/vision_ai/      코어 로직 (화면 의존 없음)
+tests/              pytest. conftest.py의 sandbox 픽스처가 경로를 tmp_path로 돌린다. test_api*.py 가 배선 테스트
 scripts/            앱 밖에서 돌리는 것 (VisA 검증 · 영상 실측 · YOLO 학습)
-data/ artifacts/    git 추적 제외 — 컨테이너가 죽으면 사라진다
+data/ artifacts/    git 추적 제외 — 컨테이너가 죽으면 사라진다 (PC 로컬에서는 남는다)
 ```
 
 ### 4단계 파이프라인과 모듈
 
-| 단계 | 화면 | 핵심 모듈 |
+| 단계 | 라우터 / 화면 | 핵심 모듈 |
 |---|---|---|
-| 1 수집 | `p1_ingest.py` | `ingest` `storage` `datasets` `quality` `video` `framing`(V0 화각 점검) |
-| 2 라벨링 | `p2_labeling.py` | `labeling` `boxes`(다중 박스) `detection`(YOLO 폴더 내보내기) |
-| 3 모델 | `p3_modeling.py` | `features` `models` `evaluate` `experiments` `report` `claude_review` `cnn_features` |
-| 4 운영 | `p4_operations.py` | `registry` `serving` `monitoring` `scenario` `segments`(V3) `compare`(V4) `playback`(V7) |
-| 공통 | — | `config` `projects` `ui` `glossary` `guide` `settings` `viz` `quickstart` `feature_cache` `patch_cache` |
+| 1 수집 | `routers/ingest.py` / `pages/Ingest.tsx` + `pages/ingest/` | `ingest` `storage` `datasets` `quality` `video` `framing`(V0 화각 점검) |
+| 2 라벨링 | `routers/labeling.py` / `pages/Labeling.tsx` + `pages/labeling/` | `labeling` `boxes`(다중 박스) `detection`(YOLO 폴더 내보내기) |
+| 3 모델 | `routers/modeling.py` / `pages/Modeling.tsx` + `pages/modeling/` | `features` `models` `evaluate` `experiments` `report` `claude_review` `cnn_features` |
+| 4 운영 | `routers/operations.py` / `pages/Operations.tsx` + `pages/operations/` | `registry` `serving` `monitoring` `scenario` `segments`(V3) `compare`(V4) `playback`(V7) |
+| 공통 | `routers/{projects,home,settings,files,jobs}.py` / `Layout.tsx` `Home.tsx` `Settings.tsx` | `config` `projects` `charts` `glossary` `guide` `settings` `viz` `quickstart` `feature_cache` `patch_cache` |
 
-README의 «구조» 절에 모듈별 한 줄 설명이 있다. 다만 **§V에서 새로 생긴 4개
-(`framing` `segments` `compare` `playback`)는 아직 그 표에 없다.**
+README의 «구조» 절에 모듈별 한 줄 설명이 있다.
 
 ### 꼭 알아야 할 설계 두 가지
 
@@ -122,16 +131,17 @@ python -m pytest tests/test_segment_metrics.py -q -k "shouts or flooding or alwa
 
 ### 2. 차트 높이는 축·범례가 먼저 가져간다 — 실측으로 확인한다
 
-Streamlit은 높이를 **그림틀 전체 크기**로 주고 Vega가 거기에 맞춰 줄인다. 축 눈금·축 제목·
+Vega는 `height`를 **그림틀 전체 크기**로 보고 거기에 맞춰 줄인다. 축 눈금·축 제목·
 범례가 먼저 자리를 가져가고 **남은 만큼만** 띠가 그려진다.
 
 V6 타임라인을 150px로 두었더니 **정답 줄과 모델 줄이 한 줄로 포개졌다.** 어긋난 자리를
 보라고 만든 화면인데 정작 두 줄이 겹친 것이다. H4 타임라인에서 이미 겪은 같은 함정이라
-260px로 올렸다(`ui.BAND_HEIGHT`, `ui.TIMELINE_HEIGHT`).
+260px로 올렸다(`charts.BAND_HEIGHT`). 차트 명세는 서버(`charts.py`)가 만들고 화면은
+`VegaChart`로 그리기만 한다 — 이런 실측값이 테스트로 잠기는 자리가 서버 쪽이기 때문이다.
 
 > **줄 수를 늘리거나 범례를 붙이면 높이를 다시 실측한다.** 계산으로 맞히려 하지 말고
 > 실제로 렌더해 눈으로 볼 것. 그리고 **줄 순서를 못 박는다** — 안 정하면 이름 순으로
-> 정렬돼 «위가 정답»이라는 설명과 그림이 어긋난다(`ui.LANE_ORDER`).
+> 정렬돼 «위가 정답»이라는 설명과 그림이 어긋난다(`charts.LANE_ORDER`).
 
 ### 3. 글꼴은 «파일이 있는가»가 아니라 «한글 글리프가 있는가»를 본다
 
@@ -162,15 +172,15 @@ V6 타임라인을 150px로 두었더니 **정답 줄과 모델 줄이 한 줄�
 
 ## 의존성 판올림 주의
 
-`requirements.txt`는 **하한만** 지정한다(`streamlit>=1.60`). 새 컨테이너는 최신 판을 깔므로
+`requirements.txt`는 **하한만** 지정한다(`fastapi>=0.115`). 새 컨테이너는 최신 판을 깔므로
 검증된 조합과 벌어진다. **테스트가 갑자기 깨지면 코드 회귀부터 의심하지 말고 판을 비교할 것.**
 
-실제로 겪은 것: Streamlit 1.60 → 1.64에서 `AppTest.from_file()`의 **상대경로 기준이
-실행 위치(cwd)에서 호출한 테스트 파일 위치로 바뀌어** `"app.py"`가 `tests/app.py`로 풀렸다.
-테스트 20개가 한꺼번에 `FileNotFoundError`로 죽는다. 지금은 `tests/test_ui.py`·
-`tests/test_projects.py`의 `APP_PY`(저장소 루트 기준 절대경로)로 막아 두었다.
+실제로 겪은 것(Streamlit 시절): 1.60 → 1.64에서 테스트 도구의 상대경로 기준이 바뀌어 테스트
+20개가 한꺼번에 죽었다. 교훈은 그대로다 — **테스트·스크립트에 넘기는 경로는 저장소 루트 기준
+절대경로로 만든다** (`server/main.py`의 `ROOT`처럼).
 
-> **AppTest에 넘기는 경로는 언제나 절대경로로 만든다.**
+프런트 의존성(`web/package.json`)은 `package-lock.json`으로 **고정**되어 있다. `npm install`은
+lock을 따르므로 판이 벌어지지 않는다. 올리고 싶으면 일부러 올리고 빌드·스크린샷으로 확인한다.
 
 ---
 
@@ -202,3 +212,8 @@ V6 타임라인을 150px로 두었더니 **정답 줄과 모델 줄이 한 줄�
 * **끝낸 항목은 `docs/todo.md`의 체크박스를 닫고** «지금 열려 있는 항목» 표에서도 뺀다.
   그 표가 남은 일의 단일 출처다.
 * **새 지표·새 차트·새 영상 출력을 넣었으면** 위 함정 규칙에 해당하는 회귀 테스트를 같이 넣는다.
+* **화면(`web/src`)을 고쳤으면 `npm run build`로 `web/dist`를 갱신해 같은 커밋에 넣는다.** PC에서는
+  dist만 실행되므로, 소스만 올리면 사용자 화면은 그대로다. 그리고 **Playwright로 스크린샷을 찍어
+  눈으로 본다** (`docs/web-migration.md` §4) — 타입 검사는 레이아웃이 깨진 것을 잡지 못한다.
+* **API를 새로 넣었으면 `tests/test_api_<화면>.py`에 배선 테스트를 넣는다.** 응답에 NaN이 섞이면
+  JSON이 깨지므로 `common.jsonable/table/records`를 거쳐야 한다.

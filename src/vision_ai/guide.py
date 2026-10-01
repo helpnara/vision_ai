@@ -26,21 +26,14 @@ import pandas as pd
 
 from . import config, features
 
-# 화면 경로 — `st.page_link`에 그대로 넘긴다.
-PAGE_INGEST = "app_pages/p1_ingest.py"
-PAGE_LABELING = "app_pages/p2_labeling.py"
-PAGE_MODELING = "app_pages/p3_modeling.py"
-PAGE_OPERATIONS = "app_pages/p4_operations.py"
-PAGE_SETTINGS = "app_pages/p5_settings.py"
+# 화면 경로 (React Router). 안내문이 «어디로 가라»고 말할 때 쓴다.
+PAGE_INGEST = "/ingest"
+PAGE_LABELING = "/labeling"
+PAGE_MODELING = "/modeling"
+PAGE_OPERATIONS = "/operations"
+PAGE_SETTINGS = "/settings"
 
-# 웹 화면(React Router) 경로. 안내문이 «어디로 가라»고 말할 때 쓴다.
-ROUTES = {
-    PAGE_INGEST: "/ingest",
-    PAGE_LABELING: "/labeling",
-    PAGE_MODELING: "/modeling",
-    PAGE_OPERATIONS: "/operations",
-    PAGE_SETTINGS: "/settings",
-}
+ROUTES = {page: page for page in (PAGE_INGEST, PAGE_LABELING, PAGE_MODELING, PAGE_OPERATIONS, PAGE_SETTINGS)}
 
 
 def route_of(page: str) -> str:

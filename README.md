@@ -1,6 +1,7 @@
 # 비전 기반 표면 결함 탐지 파이프라인
 
-물건 표면의 **결함**을 탐지하는 모델을 **오픈 데이터셋 기반**으로 개발하기 위한 Streamlit 앱이다.
+물건 표면의 **결함**을 탐지하는 모델을 **오픈 데이터셋 기반**으로 개발하기 위한 웹 앱이다
+(FastAPI + React, 로컬 PC에서 `python serve.py` 한 줄로 실행).
 수집 → 라벨링 → 모델 개발/평가 → 운영관리(MLOps)를 한 앱에서 순차적으로 다룬다.
 **제조업 기준 PoC**로, VisA의 PCB 4종(pcb1~4)을 1차 대상으로 한다.
 
@@ -66,15 +67,27 @@ PYTHONPATH=src python scripts/analyze_visa_results.py # 해석 (불량률별 환
 
 ```bash
 pip install -r requirements.txt
-streamlit run app.py
+python serve.py            # http://localhost:8000 이 브라우저에서 열린다
 ```
+
+화면(`web/dist`)은 **빌드된 채로 저장소에 들어 있다.** 그래서 Node.js 없이 파이썬만 있으면 된다 —
+저장소를 내려받아 덮어쓰고 위 두 줄을 실행하면 끝이다. 포트를 바꾸려면 `--port 8501`,
+원격·CI에서는 `--no-browser`.
 
 홈 화면이 **지금 어디까지 왔고 다음에 무엇을 할지** 알려주므로, 순서를 몰라도 따라갈 수 있다.
 지표는 핵심만 캡션으로 바로 보이고 나머지는 `?`에 있으며, 평가 결과에는 **다음에 할 일**이 함께 나온다.
 처음이라면 홈의 **⚡ 데모 한 바퀴 만들기**를 누르면 합성 데이터 생성부터 모델 승격까지 한 번에 끝난다.
 
-`app.py`가 진입점이다. `src/`를 import 경로에 자동으로 추가하므로 별도 설치 없이 실행된다.
-패키지로 설치해서 쓰려면 `pip install -e .`도 가능하다.
+`serve.py`가 진입점이다. `src/`를 import 경로에 자동으로 추가하므로 별도 설치 없이 실행된다.
+API 문서는 `http://localhost:8000/api/docs`에서 볼 수 있다.
+
+**화면 코드를 고칠 때만** Node.js가 필요하다:
+
+```bash
+cd web && npm install
+npm run dev        # http://localhost:5173 — /api 는 8000번(serve.py)으로 프록시된다
+npm run build      # 타입 검사 + web/dist 갱신 (이 결과를 커밋한다)
+```
 
 ## 1단계에서 할 수 있는 일
 
@@ -115,7 +128,7 @@ streamlit run app.py
   **조작은 늘리지 않았다** — 대충 끌고 「지정한 영역으로 확대」를 누르면 그 둘레로 확대되고
   그 안에서 다시 그린다. 같은 크기로 끌어도 잡히는 범위가 112×107에서 25×24로 줄어든다.
   지금 화면에서 그릴 수 있는 가장 작은 눈금을 항상 표시한다.
-  (별도 캔버스 컴포넌트를 쓰지 않고 Streamlit에 들어 있는 Vega-Lite 구간 선택으로 구현했다.)
+  (화면 위 드래그는 `web/src/components/RoiPicker.tsx`가 포인터 이벤트로 받아 **원본 픽셀 좌표**로 돌려준다.)
 - **폴더 라벨 검증** — 폴더 구조에서 추론한 라벨을 표본으로 눈으로 확인하고 오라벨을 고친다.
 - **결함 유형 정규화** — 데이터셋 고유 유형명(예: `broken_large`)을 프로젝트 표준 10종으로 매핑한다.
   모르는 유형을 임의로 `other`로 뭉개지 않고 매핑이 필요하다는 사실을 드러낸다.
@@ -206,28 +219,36 @@ export ANTHROPIC_API_KEY=...   # 또는 `ant auth login` 프로필
 
 ## 구조
 
+UI와 코어 로직을 갈라 둔다. **`src/vision_ai/`는 화면을 모른다** — 그래서 테스트가 화면 없이 돈다.
+화면은 `server/`(JSON API)와 `web/`(React)에서만 조립한다.
+
 ```
-app.py                     Streamlit 진입점 (네비게이션)
-app_pages/                 단계별 화면
-  home.py                  진행 현황 대시보드
-  p1_ingest.py             1단계: 데이터 수집
-  p2_labeling.py           2단계: 라벨링
-  p3_modeling.py           3단계: 모델 개발·평가
-  p4_operations.py         4단계: 운영관리 (MLOps)
-  p5_settings.py           설정 (판정 기준)
+serve.py                   진입점. uvicorn으로 server.main:app 을 띄우고 브라우저를 연다
+server/                    FastAPI — 코어를 부르고 JSON으로 바꾸는 얇은 층 (판단 로직 없음)
+  main.py                  앱 생성 · 라우터 등록 · web/dist 정적 서빙 (SPA fallback)
+  jobs.py                  백그라운드 잡 러너 (워커 1개 · 진행률 · 남은 시간)
+  state.py                 예전 세션 상태 자리 (마지막 학습 결과 · 배치 추론 특징 …)
+  common.py                DataFrame → JSON 변환 (NaN 처리) · 오류 응답
+  routers/                 화면 하나 = 라우터 하나: projects home ingest labeling modeling operations settings files jobs
+web/                       React + TypeScript (Vite)
+  src/pages/               Home Ingest Labeling Modeling Operations Settings (+ 탭별 하위 폴더)
+  src/components/          공용 조각 — Metric Alert Tabs DataTable JobProgress Gallery VegaChart RoiPicker TimelinePicker Layout
+  src/api.ts hooks.ts      서버 호출 · useFetch · useJob(잡 진행률 폴링)
+  dist/                    빌드 결과 (git 추적 — Node 없이 실행되게 하기 위해)
 src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
   config.py                경로(프로젝트별), 라벨/결함 유형 체계
   projects.py              프로젝트(작업공간) 관리 · 예전 배치 이관
   storage.py               manifest 읽기/쓰기, 중복 제거
   datasets.py              오픈 데이터셋 카탈로그, 폴더 구조 파서
   quality.py               이미지 품질 점검
-  ui.py                    화면 밀도 · 사이드바 레일 · 좁은 화면용 표 · 진행 표시 · 영역 드래그
+  charts.py                Vega-Lite 차트 명세 (구간 타임라인 · 선 그래프 — 실측으로 잡은 높이·줄 순서)
   video.py                 영상 프레임 추출 (간격 계산 · 중복 제거 · 시험용 영상)
+  framing.py               V0 화각 점검 — 이 촬영으로 결함이 모델 입력에서 몇 px인가
   boxes.py                 이미지 한 장의 결함 박스 여러 개 (COCO/YOLO 내보내기)
   detection.py             지도학습 검출 학습 폴더 내보내기 (images/ + labels/ + data.yaml)
   feature_cache.py         분류용 이미지 특징 캐시 (이미지 단위 · 프로젝트별)
   patch_cache.py           이상탐지용 격자 특징 캐시 (무압축 float16 · memmap)
-  guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장)
+  guide.py                 초보자 안내 (다음 걸음 · 모델 선택 권장 · 화면 경로)
   glossary.py              지표 설명 · 결과 판정 · 용어 · 표의 열 도움말 · 임의값 출처
   quickstart.py            빠른 시작 (생성→분할→학습→승격 한 번에)
   report.py                결과 보고서 생성
@@ -243,9 +264,12 @@ src/vision_ai/             코어 로직 (UI와 분리 — 테스트 가능)
   registry.py              모델 레지스트리 · 드리프트 기준선
   serving.py               등록된 버전으로 배치 추론
   monitoring.py            추론 로그 · 드리프트 · 재학습 판단 · 판정 이력
+  segments.py              영상·구간 단위 검출률 (V3) · 타임라인 띠 (V6)
+  compare.py               두 영상 비교 — 모델 탓인가 촬영 탓인가 (V4)
+  playback.py              판정 결과를 영상으로 되돌려 재생 (V7)
   scenario.py              운영 시나리오 시뮬레이터 (4단계 화면 시연용)
-  viz.py                   ROI/마스크 오버레이, 크롭
-tests/                     pytest
+  viz.py                   ROI/마스크 오버레이, 크롭, 한글 글꼴 판별
+tests/                     pytest (코어 + API 배선 테스트 `test_api*.py`)
 data/                      수집 이미지, manifest (git 추적 제외)
 artifacts/                 모델, 리포트 (git 추적 제외)
 ```
@@ -285,19 +309,25 @@ PYTHONPATH=src python -m pytest tests/ -q
 | `VISION_AI_ARTIFACT_ROOT` | `./artifacts` | 모델·리포트 위치 |
 | `ANTHROPIC_API_KEY` | (없음) | 3단계 Claude 2차 판정. 없으면 그 기능만 비활성 |
 
-## 배포 (Streamlit Community Cloud)
+## 배포 · 로컬 실행
+
+이 앱의 기본 실행 형태는 **개인 PC 로컬 실행**이다. 저장소를 내려받아(또는 `git pull`) 덮어쓰고
+`python serve.py`를 다시 띄우면 새 판이 반영된다. 데이터(`data/`)와 산출물(`artifacts/`)은
+저장소 밖이라 덮어써도 남는다.
 
 | 항목 | 값 |
 |------|-----|
 | Repository | `helpnara/vision_ai` |
-| Branch | `claude/vision-surface-defect-detection-j16xhj` |
-| Main file path | `app.py` |
-| Python version | 3.11 (3.10 이상이면 동작) |
-| Secrets | `ANTHROPIC_API_KEY` (선택) |
+| Branch | `claude/vision-surface-defect-detection-j16xhj` (배포본이 보는 브랜치) |
+| 진입점 | `python serve.py` (`uvicorn server.main:app`) |
+| Python version | 3.11 (3.10 이상이면 동작) · Node.js는 화면 코드를 고칠 때만 |
+| 환경변수 | `ANTHROPIC_API_KEY` (선택) |
 
-배포 관련 설정은 저장소에 포함되어 있다.
+서버에 올려 여럿이 쓰려면 `python serve.py --host 0.0.0.0 --no-browser`로 띄우되, 이 앱에는
+로그인·권한 개념이 없고 활성 프로젝트가 프로세스 전역이라 **동시에 여러 사람이 쓰는 용도가
+아니다.** 한 사람의 작업 도구로 본다.
 
-- `requirements.txt` — 의존성. `opencv-python-headless`를 쓰므로 `packages.txt`(apt 패키지)가 필요 없다.
+- `requirements.txt` — 의존성. `opencv-python-headless`를 쓰므로 apt 패키지가 필요 없다.
   일반 `opencv-python`으로 바꾸면 `libGL.so.1` 오류로 기동에 실패한다.
 - 데이터와 산출물은 **프로젝트(작업공간)별로 나뉜다.** 현장·라인마다 데이터·라벨·모델·판정
   기준을 따로 관리한다. 한 manifest에 섞으면 정상 분포가 넓어져 결함을 놓치고, 성능 지표도
@@ -313,32 +343,21 @@ PYTHONPATH=src python -m pytest tests/ -q
   활성 프로젝트는 **파일에 둔다.** 세션에 두면 브라우저 탭마다 다른 프로젝트를 보게 되고
   `scripts/`의 측정 스크립트가 어느 것을 봐야 할지 알 수 없다. 사이드바에서 전환하고,
   만들기·이름 바꾸기는 설정 화면에 있다.
-- `.streamlit/config.toml` — 테마·업로드 상한. 서버 주소/포트는 고정하지 않는다(클라우드가 지정).
-  글자 크기(`baseFontSize`·`headingFontSizes`·`metricValueFontSize`)도 여기서 줄인다. 기본값은
-  발표 슬라이드에 가까워서 작업용으로는 한 화면에 들어오는 정보가 너무 적다. CSS를 주입하지
-  않고 Streamlit이 공식 지원하는 테마 옵션만 쓰므로 버전이 올라가도 깨지지 않는다.
-  `base`는 고정하지 않는다. 비워 두면 보는 사람의 밝게/어둡게 설정을 따라간다.
-- 여백·사이드바 레일 폭·탭 줄바꿈은 테마 옵션으로 다룰 수 없어 `src/vision_ai/ui.py`에서 CSS로
-  보정한다. 선택자는 `data-testid`와 위젯 key가 만드는 `st-key-*`만 쓴다 — 둘 다 Streamlit이
-  밖으로 약속한 표식이고, `st-emotion-cache-*` 클래스는 빌드마다 바뀐다.
-  사이드바는 **펼침 / 레일(아이콘만)** 을 오가고, 레일에서도 현재 페이지에 배경 표시가 남아
-  "지금 몇 단계인지"를 잃지 않는다. 접기 버튼은 화면 폭에 따라 의미가 달라진다 — 넓은 화면에서는
-  레일 토글, 640px 이하에서는 Streamlit 기본 동작(패널 치우기)이며, 보이는 버튼은 항상 하나다.
-- `.streamlit/secrets.toml.example` — 시크릿 형식. 실제 `secrets.toml`은 커밋하지 않고
-  앱 설정 화면(Settings → Secrets)에 붙여넣는다. Streamlit이 최상위 시크릿을 환경변수로도
-  올려주므로 코드는 `os.environ`만 읽으면 된다.
-- 페이지 디렉터리를 `pages/`가 아닌 `app_pages/`로 둔 이유는, Streamlit이 `pages/`를 자동
-  탐지해 `st.navigation`으로 구성한 메뉴와 중복되기 때문이다.
+- 긴 작업(학습·추출·추론·영상 만들기)은 **백그라운드 잡**으로 돈다(`server/jobs.py`). 화면은
+  잡 id를 받아 진행률을 폴링하므로 브라우저를 새로고침해도 작업은 죽지 않는다. 워커는 하나다 —
+  코어가 CSV를 잠금 없이 읽고 쓰므로 두 작업이 동시에 돌면 반쯤 쓰인 파일을 읽을 수 있다.
+- 화면 밀도·사이드바 레일·밝게/어둡게 테마는 `web/src/styles.css`의 토큰으로 정한다.
+  어두운 테마의 강조색은 **버튼 배경이면서 그 위 흰 글씨의 대비**를 함께 맞춰야 해서 `#2f6fe4`다
+  (실측: 흰글씨 4.65 : 배경 4.06, 둘 다 기준 통과).
 
-### 배포 환경에서 달라지는 점
+### 공용 서버에 올렸을 때 달라지는 점
 
-무료 배포 환경은 **컨테이너가 일회성**이다. 재시작하면 `data/`·`artifacts/`가 비워지므로
+일회성 컨테이너(무료 호스팅 등)에 올리면 재시작할 때 `data/`·`artifacts/`가 비워지므로
 수집한 이미지, 라벨, 학습한 모델, 레지스트리, 판정 이력이 **모두 사라진다.**
-따라서 배포본은 다음 용도로 본다.
+따라서 그런 배포본은 다음 용도로 본다.
 
 - 적합: 화면·흐름 시연, 합성 샘플로 파이프라인 한 바퀴 돌려보기, 설계 리뷰
 - 부적합: 실제 라벨링 작업, VisA 전체 학습, 운영 이력 축적
 
-또한 공개 배포 시 접속자 전원이 같은 컨테이너의 CSV를 공유하며, 이 앱에는 로그인·권한 개념이
-없다. 여러 명이 동시에 라벨을 쓰면 서로의 작업에 섞인다. 실제 라벨링과 실데이터 학습은
-**로컬 실행**을 쓴다.
+또한 접속자 전원이 같은 CSV를 공유하며, 이 앱에는 로그인·권한 개념이 없다. 여러 명이 동시에
+라벨을 쓰면 서로의 작업에 섞인다. 실제 라벨링과 실데이터 학습은 **로컬 실행**을 쓴다.

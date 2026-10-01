@@ -1,6 +1,6 @@
 # 인수인계 (HANDOFF)
 
-> 마지막 갱신: 2026-10-01
+> 마지막 갱신: 2026-10-02
 > 작업 브랜치: `claude/stoic-albattani-qwcf61`
 > 배포 브랜치: `claude/vision-surface-defect-detection-j16xhj` (README 배포표 기준. 지금 두 브랜치는 같은 커밋)
 > ⚠️ 새 세션이 **배포 브랜치가 체크아웃된 채로** 열릴 수 있다 — 아래 «2-1» 참조
@@ -14,25 +14,50 @@
 
 ## 1. 한 줄 요약
 
-1~4단계 파이프라인(수집 → 라벨링 → 모델 개발·평가 → 운영관리)과 §V(다른 영상으로 탐지율
-재기) 경로가 **V5를 빼고 전부 구현·푸시되어 있다.** 남은 4항목은 전부 **이 컨테이너에 없는
-자원**(GPU · 실제 촬영본 · API 키)이 있어야 시작할 수 있다. 즉 **코드로 더 밀어붙일 수 있는
-항목이 지금은 없다.**
+1~4단계 파이프라인과 §V 경로가 V5를 빼고 전부 구현되어 있고, **2026-10-01~02에 화면을
+Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serve.py` 한 줄, 화면은 빌드된
+채(`web/dist`) 저장소에 있어 PC에 Node가 없어도 된다. 사용자는 **저장소를 내려받아 덮어쓰고
+로컬에서 테스트하는 방식**으로 쓴다.
+
+남은 백로그 4항목은 전부 **이 컨테이너에 없는 자원**(GPU · 실제 촬영본 · API 키)이 있어야
+시작할 수 있다. 코드로 더 밀어붙일 수 있는 항목은 «전환 뒤 다듬기»(§3-1) 정도다.
 
 ---
 
-## 2. 지금 상태 (2026-10-01 실측)
+## 2. 지금 상태 (2026-10-02 실측)
 
 | 확인 항목 | 결과 |
 |---|---|
 | 작업 트리 | 깨끗함 (`git status` 비어 있음) |
-| origin 동기화 | 작업·배포 브랜치 모두 `fabbfff`로 같은 커밋. 갈라진 것 없음 |
-| 최신 커밋 | `fabbfff` docs: 배포 브랜치까지 미는 절차를 작업 습관에 적는다 |
-| 설치된 판 | streamlit 1.64.0 · pandas 3.0.6 · scikit-learn 1.9.1 · joblib 1.6.0 (9-19와 동일) |
-| 테스트 | **790 passed · 4 skipped** (합계 794 — 기준과 일치) |
-| 린트 | `ruff check .` 12건 (전부 기존 항목, 기준과 일치) |
-| 앱 기동 | `streamlit run app.py` → HTTP 200, `/_stcore/health` = `ok`, 로그에 예외 없음 |
+| origin 동기화 | 작업·배포 브랜치 같은 커밋. 갈라진 것 없음 |
+| 실행 스택 | **FastAPI + React** (`python serve.py` → http://localhost:8000). Streamlit 코드는 제거됨 |
+| 설치된 판 | fastapi 0.142.2 · uvicorn 0.50.2 · pandas 3.0.6 · scikit-learn 1.9.1 · joblib 1.6.0 · Node 22 / vite 7 / react 19 |
+| 테스트 | **765 passed · 4 skipped = 769** |
+| 린트 | `ruff check .` 9건 (전부 기존 항목) |
+| 프런트 빌드 | `cd web && npm run build` 통과 (tsc + vite). 결과 `web/dist` 커밋됨 |
+| 앱 기동 | `python serve.py --no-browser` → `/api/health` ok, 6화면 모두 Playwright 스크린샷에서 콘솔 오류 0 |
 | 검증 데이터 | 없음 — `data/`·`artifacts/`는 컨테이너와 함께 사라졌다 (§4) |
+
+### 2-0. 10-01~02 세션에서 한 것 — Streamlit → FastAPI + React 전환
+
+사용자 요청: «streamlit을 쓰지 않는 방식으로, C(FastAPI JSON API + 별도 프런트)로, 내 PC에
+내려받아 덮어쓰고 테스트하는 방식». 구조와 규약은 [`web-migration.md`](web-migration.md)에,
+구조 표는 CLAUDE.md «코드 구조»에 있다. 핵심 결정:
+
+* **`web/dist`를 커밋한다.** 사용자가 Node 없이 `pip install` + `python serve.py`만으로 돌리게
+  하기 위해서다. 그래서 **화면 코드를 고치면 `npm run build` 결과를 같은 커밋에 넣어야 한다.**
+* **긴 작업은 잡**(`server/jobs.py`, 워커 1개)으로 돌리고 화면이 진행률을 폴링한다. Streamlit에서
+  요청 안에서 동기로 돌던 19곳이 전부 이렇게 바뀌었다.
+* **세션 상태는 서버 메모리**(`server/state.py`). 단일 사용자 로컬 도구이고 활성 프로젝트가
+  프로세스 전역이라 세션별로 나누지 않는다. 프로젝트를 바꾸면 비운다.
+* **차트 명세는 서버**(`src/vision_ai/charts.py`)가 만든다. `BAND_HEIGHT`·`LANE_ORDER` 같은
+  실측값과 테스트가 거기 산다. 화면은 vega-embed로 그리기만 한다.
+* **ROI·타임라인 드래그는 포인터 이벤트**(`RoiPicker.tsx` `TimelinePicker.tsx`)로 다시 짰다.
+  좌표는 여전히 원본 픽셀 기준이고 확대(`zoomTo`)·눈금 문구(`zoomNote`)도 옮겼다.
+* 화면 6개는 작업자 4명이 병렬로 옮겼고(탭별 파일), 한국어 문구·help·«왜» 주석은 원문 그대로다.
+  각 화면은 `tests/test_api_<화면>.py` 배선 테스트와 Playwright 스크린샷으로 확인했다.
+* 제거한 것: `app.py` `app_pages/` `src/vision_ai/ui.py` `.streamlit/` `tests/test_ui.py`,
+  `requirements.txt`의 streamlit. `guide.PAGE_*`는 웹 경로(`/ingest` …)를 가리킨다.
 
 ### 2-1. 세션이 «기반 브랜치가 없다»며 못 열릴 때
 
@@ -55,7 +80,7 @@ git log --oneline origin/claude/stoic-albattani-qwcf61..origin/claude/vision-sur
 이후 푸시는 CLAUDE.md «작업 습관»대로 작업 브랜치 → 배포 브랜치 fast-forward 순서다.
 세션이 배포 브랜치를 기반으로 열렸더라도 **배포 브랜치에서 직접 커밋하지 않는다.**
 
-### 2-2. 9-19 세션에서 고친 것 (커밋 `test: AppTest 경로를 저장소 루트에 고정`)
+### 2-2. 9-19 세션에서 고친 것 (커밋 `test: AppTest 경로를 저장소 루트에 고정`) — 지금은 역사
 
 컨테이너를 새로 받으면 **테스트 20개가 `FileNotFoundError`로 죽는다.** 코드 회귀가 아니라
 **의존성 판올림**이 원인이었다.
@@ -66,7 +91,8 @@ git log --oneline origin/claude/stoic-albattani-qwcf61..origin/claude/vision-sur
 그 결과 `"app.py"`가 `tests/app.py`로 풀려 전부 실패한다.
 
 `tests/test_ui.py`·`tests/test_projects.py`에 `APP_PY`(저장소 루트 기준 **절대경로**)를 두고
-12곳을 그것으로 바꿨다. 이제 Streamlit 판올림과 무관하게 돈다.
+12곳을 그것으로 바꿨다. (10-02 전환으로 AppTest 자체가 사라졌다. 교훈 — 경로는 절대경로로 —
+만 CLAUDE.md «의존성 판올림 주의»에 남겼다.)
 
 > 같은 성격의 사고가 또 날 수 있다. 설치된 판은 검증된 조합과 다음과 같이 벌어져 있다:
 > streamlit 1.60.0→**1.64.0**, pandas 3.0.5→3.0.6, scikit-learn 1.9.0→**1.9.1**,
@@ -86,6 +112,17 @@ git log --oneline origin/claude/stoic-albattani-qwcf61..origin/claude/vision-sur
 | 2 | **§F** 지도학습 검출 학습 실제 실행 | 박스 재료는 이미 채웠다(447장·1,393개, `boxes.from_masks()`로 VisA 마스크에서 자동 생성). `detection.export_yolo()`가 학습 폴더까지 만든다. 남은 건 GPU 기계에서 돌리는 것 | **GPU 환경.** 추가로 **공식 1cls 분할은 train에 결함이 0장이라 그대로 못 쓴다 — 별도 분할이 필요하다** | ❌ |
 | 3 | **§E** Claude 2차 판정 실호출 검증 | `claude_review.py`는 구현·테스트 완료지만 **실제 API 호출로는 한 번도 확인하지 않았다** | **`ANTHROPIC_API_KEY`** (이 환경 미설정, `anthropic` 패키지도 미설치) | ❌ |
 | 4 | **§H** 1단계 영상 화면 잔여 개선 | 카테고리를 선택형으로 · 추출 전 미리보기 · 검수 큐에서 영상 프레임 구분 | 없음 — 다만 **«이번에는 목록 선택만 하기로 정했다. 필요해지면 그때»** 로 의도적으로 보류한 항목이다 | ⭕ (단 보류 결정이 살아 있음) |
+
+### 3-1. 전환 뒤 다듬을 거리 (자원 없이 가능 — 작업자 보고서에서 모은 것)
+
+| 항목 | 내용 |
+|---|---|
+| 공용 컴포넌트 | `Cols`에 비율(`[3,2]`) 지원 · `FileInput` · `Expander onToggle` · `Bars`의 실수 표기 · `MetricRow`(glossary 캡션 붙는 지표 줄)를 `components/`로 올리기 |
+| 훅 | `useDebounced`를 `hooks.ts`로 (지금 `pages/ingest/util.ts`). 객체 인자는 useMemo로 고정해야 한다는 함정 주석 포함 |
+| 서버 | `IngestResult → dict` 변환이 세 곳 반복. 마지막 잡 요약을 두는 `state` 키 패턴을 정식화 |
+| 영상 선택기 | 1단계(`/api/ingest/videos*`)와 4단계(`/api/operations/videos*`)가 같은 선택기를 각자 가짐 — 하나로 합치기 |
+| 코어 | `video.describe_video()` — `ui.py`에서 옮겨 올 때 라우터에 복제됨. `video.py`로 올리기 |
+| 좁은 화면 | `RoiPicker`가 고정 폭(640px)이라 폰에서는 가로 스크롤. 컨테이너 폭에 맞추는 옵션 |
 
 ### 차단 요인을 풀면 무엇부터인가
 
@@ -155,7 +192,7 @@ PYTHONPATH=src python -m pytest tests/test_segment_metrics.py -q -k "shouts or f
 
 ### 재현 절차 (데이터 없이 시작할 때)
 
-1. 앱을 띄우고 사이드바에서 프로젝트를 새로 만든다 («V3 확인용» 등 한글 이름 그대로 써도 된다 —
+1. `python serve.py`로 앱을 띄우고 설정 화면에서 프로젝트를 새로 만든다 («V3 확인용» 등 한글 이름 그대로 써도 된다 —
    S1에서 폴더명 로마자화를 넣었다)
 2. 1단계 → **시험용 영상 만들기**로 합성 영상을 만든다 (`video.py`. 내려받기 없이 생성된다)
 3. 1단계 영상 탭에서 프레임 추출 → manifest 등록 (영상 id가 `group` 열에 붙는다)

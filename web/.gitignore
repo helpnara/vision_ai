@@ -1,0 +1,2 @@
+node_modules/
+# dist/ 는 일부러 추적한다 — PC에서 Node 없이 `python serve.py`만으로 돌게 하기 위해서다.

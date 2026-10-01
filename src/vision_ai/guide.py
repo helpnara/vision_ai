@@ -33,6 +33,20 @@ PAGE_MODELING = "app_pages/p3_modeling.py"
 PAGE_OPERATIONS = "app_pages/p4_operations.py"
 PAGE_SETTINGS = "app_pages/p5_settings.py"
 
+# 웹 화면(React Router) 경로. 안내문이 «어디로 가라»고 말할 때 쓴다.
+ROUTES = {
+    PAGE_INGEST: "/ingest",
+    PAGE_LABELING: "/labeling",
+    PAGE_MODELING: "/modeling",
+    PAGE_OPERATIONS: "/operations",
+    PAGE_SETTINGS: "/settings",
+}
+
+
+def route_of(page: str) -> str:
+    """화면 식별자 → 웹 경로. 모르는 값이면 홈."""
+    return ROUTES.get(page, "/")
+
 KIND_ANOMALY = "anomaly"
 KIND_BASELINE = "baseline"
 

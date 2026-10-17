@@ -32,7 +32,7 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
 | origin 동기화 | 작업·배포 브랜치 같은 커밋. 갈라진 것 없음 |
 | 실행 스택 | **FastAPI + React** (`python serve.py` → http://localhost:8000). Streamlit 코드는 제거됨 |
 | 설치된 판 | fastapi 0.142.2 · uvicorn 0.50.2 · pandas 3.0.6 · scikit-learn 1.9.1 · joblib 1.6.0 · Node 22 / vite 7 / react 19 |
-| 테스트 | **803 passed · 4 skipped = 807** |
+| 테스트 | **809 passed · 4 skipped = 813** |
 | 린트 | `ruff check .` 9건 (전부 기존 항목) |
 | 프런트 빌드 | `cd web && npm run build` 통과 (tsc + vite). 결과 `web/dist` 커밋됨 |
 | 앱 기동 | `python serve.py --no-browser` → `/api/health` ok, 6화면 모두 Playwright 스크린샷에서 콘솔 오류 0 |

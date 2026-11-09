@@ -51,7 +51,9 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
 * **배포 기록 보충** — 10-17 커밋 `55ceadc`로 만든 `느린 눈-20261018-v1.zip`의 줄이 `docs/releases.md`에 빠져 있었다.
   사용자가 그 판으로 로컬 웹 테스트를 마쳤다고 확인해 줘서 줄을 손으로 채웠다(시각은 남은 기록이 없어 «미상»).
   **zip을 만들면 기록 줄까지 커밋·푸시한다** — 빠지면 같은 날 번호가 겹친다.
-* 테스트 경고 1건: `monitoring.py:85`의 `pd.to_datetime`이 형식을 추론하지 못한다는 UserWarning. 실패는 아니다.
+* 테스트 경고 1건: `monitoring.py:85`의 `pd.to_datetime`이 형식을 추론하지 못한다는 UserWarning. 실패는 아니다(→ R7).
+* **후속 작업 진행 틀** — [`process.md`](process.md)(설계 → 개발 → 검증 규약) · [`plans/TEMPLATE.md`](plans/TEMPLATE.md)(설계 문서 틀) ·
+  `scripts/verify.py`(검증 1~4를 한 번에, 기준 숫자는 CLAUDE.md에서 읽음) · todo.md 표에 «단계» 열과 §R(R1~R7).
 
 ### 2-0. 10-01~02 세션에서 한 것 — Streamlit → FastAPI + React 전환
 
@@ -139,6 +141,9 @@ git log --oneline origin/$WORK..origin/claude/vision-surface-defect-detection-j1
 | 4 | **§H** 1단계 영상 화면 잔여 개선 | 카테고리를 선택형으로 · 추출 전 미리보기 · 검수 큐에서 영상 프레임 구분 | 없음 — 다만 **«이번에는 목록 선택만 하기로 정했다. 필요해지면 그때»** 로 의도적으로 보류한 항목이다 | ⭕ (단 보류 결정이 살아 있음) |
 
 ### 3-1. 전환 뒤 다듬을 거리 (자원 없이 가능 — 작업자 보고서에서 모은 것)
+
+> 11-09에 todo.md **§R(R1~R7)** 로 옮겨 번호를 붙였다. 진행 단계는 거기 표가 단일 출처다. 아래 표는 배경 설명으로만 남긴다.
+> 진행은 [`process.md`](process.md)의 설계 → 개발 → 검증 순서이고, **다음 한 걸음은 R1 설계**다.
 
 | 항목 | 내용 |
 |---|---|

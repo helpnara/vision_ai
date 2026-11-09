@@ -560,30 +560,16 @@ def inference_clear_log() -> dict:
 
 # --- 영상 고르기 (ui.video_source의 자리) -------------------------------------
 #
-# 1단계(추출)와 4단계(판정 영상)가 같은 일을 한다 — «어떤 영상을 쓸 것인가». 1단계 쪽
-# 엔드포인트가 함께 만들어지는 중이라 여기서는 자기 라우터 아래에 둔다. 나중에 하나로 합친다.
-
-def _describe_video(path: Path) -> str:
-    """목록에 보일 이름. 크기를 붙여야 같은 이름의 다른 영상을 구분할 수 있다.
-
-    영상마다 열어서 길이를 재면 목록을 그릴 때마다 파일을 전부 여는 셈이 되므로 크기만
-    쓴다. MB로만 적으면 작은 영상이 전부 `0MB`가 되어 구분이 되지 않는다.
-    """
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return path.name
-    if size >= 1_048_576:
-        return f"{path.name} · {size / 1_048_576:,.1f}MB"
-    return f"{path.name} · {max(size // 1024, 1):,}KB"
-
+# 1단계(추출)와 4단계(판정 영상)가 같은 일을 한다 — «어떤 영상을 쓸 것인가». 전환 때 1단계 쪽
+# 엔드포인트가 함께 만들어지는 중이라 여기서는 자기 라우터 아래에 두었다. 목록 이름 짓기는
+# R1에서 `video.describe_video`로 합쳤고, 엔드포인트(응답 모양이 두 화면에서 다르다)는 R2에서 합친다.
 
 @router.get("/videos")
 def videos(scan: str = "") -> dict:
     scan = typed_path(scan)
     found = video.listed(*([scan] if scan else []))
     return {
-        "videos": [{"path": str(p), "label": _describe_video(p)} for p in found],
+        "videos": [{"path": str(p), "label": video.describe_video(p)} for p in found],
         "video_dir": str(video.video_dir()),
         "scan_missing": bool(scan) and not Path(scan).expanduser().is_dir(),
         "extensions": sorted(video.VIDEO_EXTENSIONS),

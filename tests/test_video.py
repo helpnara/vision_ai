@@ -349,3 +349,54 @@ def test_extracted_frames_map_back_to_their_position(clip, tmp_path):
     indexes = [video.frame_index(path) for path in result.saved]
     assert indexes == sorted(indexes)
     assert all(index % 10 == 0 for index in indexes)
+
+
+# --- R1: 목록 이름 짓기 (`video.describe_video`) ----------------------------------
+#
+# 1단계·4단계 영상 선택기가 같은 영상을 같은 이름으로 보이게 하는 한 곳. 예전에는 두 라우터에
+# 글자 그대로 복제돼 있었다 — 한쪽만 고치면 두 화면의 이름이 어긋난다.
+
+def _sized(path, size: int):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\0" * size)
+    return path
+
+
+def test_describe_video_uses_kb_below_a_megabyte(tmp_path):
+    # MB로 적으면 작은 영상이 전부 `0.0MB`가 되어 구분이 안 된다
+    assert video.describe_video(_sized(tmp_path / "a.mp4", 300 * 1024)) == "a.mp4 · 300KB"
+    assert video.describe_video(_sized(tmp_path / "b.mp4", 1_048_575)) == "b.mp4 · 1,023KB"
+    assert video.describe_video(_sized(tmp_path / "c.mp4", 10)) == "c.mp4 · 1KB"  # 0KB로 보이지 않게
+
+
+def test_describe_video_uses_mb_from_a_megabyte(tmp_path):
+    assert video.describe_video(_sized(tmp_path / "a.mp4", 1_048_576)) == "a.mp4 · 1.0MB"
+    assert video.describe_video(_sized(tmp_path / "b.mp4", int(2.5 * 1_048_576))) == "b.mp4 · 2.5MB"
+
+
+def test_describe_video_tells_same_name_apart_by_size(tmp_path):
+    one = _sized(tmp_path / "day1" / "line1.mp4", 200 * 1024)
+    two = _sized(tmp_path / "day2" / "line1.mp4", 900 * 1024)
+    assert video.describe_video(one) != video.describe_video(two)
+
+
+def test_describe_video_falls_back_to_name_when_missing(tmp_path):
+    # 목록을 그리는 사이 지워져도 목록 전체가 죽지 않는다
+    assert video.describe_video(tmp_path / "ghost.mp4") == "ghost.mp4"
+    assert video.describe_video(str(tmp_path / "ghost.mp4")) == "ghost.mp4"  # 문자열 경로도 받는다
+
+
+def test_describe_video_keeps_korean_names(tmp_path):
+    clip_path = _sized(tmp_path / "바탕 화면" / "라인1 영상.mp4", 2048)
+    assert video.describe_video(clip_path) == "라인1 영상.mp4 · 2KB"
+
+
+def test_routers_do_not_carry_their_own_describe_video():
+    """복제가 다시 생기지 않게 잠근다 — 라우터는 `video.describe_video`만 부른다."""
+    from pathlib import Path
+
+    routers = Path(__file__).resolve().parent.parent / "server" / "routers"
+    offenders = [p.name for p in sorted(routers.glob("*.py"))
+                 if "def _describe_video" in p.read_text(encoding="utf-8")
+                 or "1_048_576" in p.read_text(encoding="utf-8")]
+    assert offenders == [], f"영상 이름 짓기가 라우터에 복제됐다: {offenders} — video.describe_video를 쓸 것"

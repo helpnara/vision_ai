@@ -151,6 +151,28 @@ def listed(*extra: Path | str, limit: int = 200) -> list[Path]:
     return found
 
 
+def describe_video(path: Path | str) -> str:
+    """목록에 보일 이름 (`line1.mp4 · 3.2MB`). 1단계·4단계 영상 선택기가 함께 쓴다.
+
+    크기를 붙여야 같은 이름의 다른 영상을 구분할 수 있다. 영상마다 열어서 길이를 재면 목록을
+    그릴 때마다 파일을 전부 여는 셈이 되므로 크기만 쓴다. MB로만 적으면 작은 영상이 전부
+    `0.0MB`가 되어 구분이 되지 않으므로 1MB 밑은 KB로 내려간다.
+
+    목록을 그리는 사이 파일이 지워졌으면(`stat` 실패) 이름만 돌려준다 — 목록 전체가 죽지 않게.
+
+    (R1, 2026-11-09: 전환 때 두 라우터에 글자 그대로 복제돼 있던 것을 여기로 모았다. 한쪽만
+    고치면 같은 영상이 두 화면에서 다른 이름으로 보이게 된다. `tests/test_video.py`가 복제 재발을 막는다.)
+    """
+    path = Path(path)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return path.name
+    if size >= 1_048_576:
+        return f"{path.name} · {size / 1_048_576:,.1f}MB"
+    return f"{path.name} · {max(size // 1024, 1):,}KB"
+
+
 def probe(path) -> VideoInfo:
     """영상 메타데이터를 읽는다. 열 수 없으면 OSError."""
     import cv2

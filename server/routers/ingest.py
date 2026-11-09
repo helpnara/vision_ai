@@ -193,24 +193,8 @@ async def upload_images(
 
 # --- 영상 선택기 (1단계·4단계 공용) ---------------------------------------------------
 
-def _describe_video(path: Path) -> str:
-    """목록에 보일 이름. 크기를 붙여야 같은 이름의 다른 영상을 구분할 수 있다.
-
-    영상마다 열어서 길이를 재면 목록을 그릴 때마다 파일을 전부 여는 셈이 되므로 크기만
-    쓴다. MB로만 적으면 작은 영상이 전부 `0MB`가 되어 구분이 되지 않는다.
-    (예전 `ui.describe_video` — ui는 Streamlit을 부르므로 여기서 다시 쓴다.)
-    """
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return path.name
-    if size >= 1_048_576:
-        return f"{path.name} · {size / 1_048_576:,.1f}MB"
-    return f"{path.name} · {max(size // 1024, 1):,}KB"
-
-
 def _video_entry(path: Path) -> dict:
-    return {"path": str(path), "name": path.name, "label": _describe_video(path)}
+    return {"path": str(path), "name": path.name, "label": video.describe_video(path)}
 
 
 @router.get("/videos")

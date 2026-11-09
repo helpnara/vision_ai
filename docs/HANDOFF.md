@@ -32,7 +32,7 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
 | origin 동기화 | 이관 시점(`55ceadc`)에 새·옛 작업 브랜치와 배포 브랜치가 모두 같은 커밋. 갈라진 것 없음 |
 | 실행 스택 | **FastAPI + React** (`python serve.py` → http://localhost:8000). Streamlit 코드는 제거됨 |
 | 설치된 판 | fastapi **0.162.2** · uvicorn **0.54.0** · pandas 3.0.5 · scikit-learn 1.9.1 · joblib 1.6.0 · numpy 2.5.3 · opencv-python-headless **5.0.0.93** · ruff **0.16.9** · Node 22 / vite 7 / react 19 (10-02 검증 조합은 fastapi 0.142.2 · uvicorn 0.50.2 — 판이 올랐지만 전부 통과) |
-| 테스트 | **809 passed · 4 skipped = 813** |
+| 테스트 | **815 passed · 4 skipped = 819** (11-09 R1 뒤. 이관 시점은 809) |
 | 린트 | `ruff check .` 9건 (전부 기존 항목). ruff 0.16은 기본 규칙이 넓어 115건이 나와서 `pyproject.toml`에 규칙을 고정했다 |
 | 프런트 빌드 | `cd web && npm ci && npm run build` 통과 (tsc + vite). 다시 빌드해도 `web/dist`에 차이 없음 — 커밋된 dist가 소스와 맞다 |
 | 앱 기동 | `python serve.py --no-browser` → `/api/health` ok, `/` 200 (10-02에는 6화면 모두 Playwright 스크린샷에서 콘솔 오류 0) |
@@ -143,7 +143,7 @@ git log --oneline origin/$WORK..origin/claude/vision-surface-defect-detection-j1
 ### 3-1. 전환 뒤 다듬을 거리 (자원 없이 가능 — 작업자 보고서에서 모은 것)
 
 > 11-09에 todo.md **§R(R1~R7)** 로 옮겨 번호를 붙였다. 진행 단계는 거기 표가 단일 출처다. 아래 표는 배경 설명으로만 남긴다.
-> 진행은 [`process.md`](process.md)의 설계 → 개발 → 검증 순서이고, **다음 한 걸음은 R1 설계**다.
+> 진행은 [`process.md`](process.md)의 설계 → 개발 → 검증 순서다. **R1 완료(11-09). 다음 한 걸음은 R2 설계**다.
 
 | 항목 | 내용 |
 |---|---|

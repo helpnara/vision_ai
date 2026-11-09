@@ -310,8 +310,7 @@
 
 | # | 항목 | 무엇을 하는가 | 시작 전 확인할 것 | 단계 |
 |---|---|---|---|---|
-| R1 | 영상 설명 함수를 코어로 | 1단계·4단계 라우터에 복제된 `_describe_video()`를 `video.describe_video()` 하나로 | 없음 | **개발** — [`plans/R1-describe-video.md`](plans/R1-describe-video.md) (11-09 승인) |
-| R2 | 영상 선택기 하나로 | `/api/ingest/videos*`와 `/api/operations/videos*`의 같은 선택기(API·화면)를 하나로. R1 위에 선다 | 두 화면의 동작 차이를 설계에서 표로 대 본다 | 설계 전 |
+| R2 | 영상 선택기 하나로 | `/api/ingest/videos*`와 `/api/operations/videos*`의 같은 선택기(API·화면)를 하나로. R1(완료) 위에 선다 | 두 화면의 동작 차이를 설계에서 표로 대 본다 | 설계 전 |
 | R3 | 서버 반복 정리 | `IngestResult → dict` 변환 세 곳을 하나로 · 마지막 잡 요약을 두는 `state` 키 패턴 정식화 | 없음 | 설계 전 |
 | R4 | `useDebounced`를 공용 훅으로 | `pages/ingest/util.ts` → `hooks.ts`. 객체 인자는 useMemo로 고정해야 한다는 함정 주석 포함 | 없음 | 설계 전 |
 | R5 | 공용 컴포넌트 승격 | `Cols` 비율(`[3,2]`) · `FileInput` · `Expander onToggle` · `Bars` 실수 표기 · `MetricRow`를 `components/`로 | 화면 전체가 바뀌므로 스크린샷 전후 비교 | 설계 전 |
@@ -678,7 +677,7 @@ Streamlit → FastAPI + React 전환(W0~W6) 때 화면 6개를 작업자 4명이
 «공유 파일에 넣으면 좋을 것»을 모은 것이 R1~R6이고, R7은 이관 점검에서 새로 본 경고다.
 각 항목은 [`process.md`](process.md)대로 설계 → 개발 → 검증을 밟는다.
 
-- [ ] **R1** 영상 설명 함수를 코어로 — `server/routers/ingest.py:_describe_video` · `server/routers/operations.py:_describe_video`
+- [x] **R1** 영상 설명 함수를 코어로 — `video.describe_video`로 합침 (11-09 완료 · [`plans/R1-describe-video.md`](plans/R1-describe-video.md))
 - [ ] **R2** 영상 선택기 하나로 — 두 라우터의 `GET /videos` · `GET /videos/check`와 두 화면의 선택 UI
 - [ ] **R3** 서버 반복 정리 — `IngestResult → dict` 세 곳 · `state` 키 패턴
 - [ ] **R4** `useDebounced` → `web/src/hooks.ts`

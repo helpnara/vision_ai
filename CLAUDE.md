@@ -15,7 +15,7 @@
 # 의존성 (새 컨테이너는 비어 있다 — 테스트 전에 반드시)
 pip install -r requirements.txt pytest ruff httpx
 
-# 테스트 전체 (기준: 809 passed · 4 skipped = 813)
+# 테스트 전체 (기준: 815 passed · 4 skipped = 819)
 python -m pytest -q
 
 # 한 파일 / 한 개

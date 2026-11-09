@@ -310,7 +310,7 @@
 
 | # | 항목 | 무엇을 하는가 | 시작 전 확인할 것 | 단계 |
 |---|---|---|---|---|
-| R1 | 영상 설명 함수를 코어로 | 1단계·4단계 라우터에 복제된 `_describe_video()`를 `video.describe_video()` 하나로 | 없음 | 설계 전 |
+| R1 | 영상 설명 함수를 코어로 | 1단계·4단계 라우터에 복제된 `_describe_video()`를 `video.describe_video()` 하나로 | 없음 | **설계** — [`plans/R1-describe-video.md`](plans/R1-describe-video.md) 승인 대기 |
 | R2 | 영상 선택기 하나로 | `/api/ingest/videos*`와 `/api/operations/videos*`의 같은 선택기(API·화면)를 하나로. R1 위에 선다 | 두 화면의 동작 차이를 설계에서 표로 대 본다 | 설계 전 |
 | R3 | 서버 반복 정리 | `IngestResult → dict` 변환 세 곳을 하나로 · 마지막 잡 요약을 두는 `state` 키 패턴 정식화 | 없음 | 설계 전 |
 | R4 | `useDebounced`를 공용 훅으로 | `pages/ingest/util.ts` → `hooks.ts`. 객체 인자는 useMemo로 고정해야 한다는 함정 주석 포함 | 없음 | 설계 전 |

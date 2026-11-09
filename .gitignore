@@ -10,6 +10,9 @@ __pycache__/
 venv/
 .env
 
+# 세션 임시 파일 (예전 세션의 scratchpad 영상이 여기로 커밋된 적이 있다 — 4a824b1)
+tmp/
+
 # 도구 캐시
 .pytest_cache/
 .ruff_cache/

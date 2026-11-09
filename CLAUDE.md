@@ -38,6 +38,8 @@ ruff check .
 `ruff check .`는 지금 **9건이 남아 있다**(미사용 import·f-string·모호한 변수명 `l`).
 전부 기존 항목이고 기능에 영향이 없어 손대지 않았다. **새로 건드린 파일에서 이 수가 늘지
 않는지만 보면 된다** — 특정 파일만 보려면 `ruff check <파일>`.
+규칙 묶음은 `pyproject.toml`에 고정해 두었다 — ruff 판이 올라도 같은 수가 나온다(0.16에서 기본값이
+넓어져 115건으로 뛴 적이 있다).
 
 `pyproject.toml`이 `pythonpath = ["src"]`·`testpaths = ["tests"]`를 잡아 두므로
 **pytest에 `PYTHONPATH=src`를 따로 줄 필요가 없다.** 스크립트는 pytest를 안 거치므로 필요하다:
@@ -201,17 +203,23 @@ lock을 따르므로 판이 벌어지지 않는다. 올리고 싶으면 일부�
 
 ## 작업 습관
 
-* **브랜치**: `claude/stoic-albattani-qwcf61`에서 작업하고, **거기에 먼저 푸시한 뒤 배포
-  브랜치로 fast-forward 한다.** 배포본이 보는 것은 `claude/vision-surface-defect-detection-j16xhj`
-  다(README 배포표). 작업 브랜치에만 올리면 배포본에 반영되지 않는다.
+* **브랜치**: 작업 브랜치에서 작업하고, **거기에 먼저 푸시한 뒤 배포 브랜치로 fast-forward 한다.**
+  배포본이 보는 것은 `claude/vision-surface-defect-detection-j16xhj`다(README 배포표). 작업 브랜치에만
+  올리면 배포본에 반영되지 않는다.
+
+  **작업 브랜치 이름은 세션(계정)마다 바뀐다** — 세션이 지정해 주는 `claude/…` 브랜치를 쓴다.
+  지금은 `claude/lucid-ptolemy-a2gca1`이다(2026-11 다른 계정으로 이관하며 바뀜. 그 전은
+  `claude/stoic-albattani-qwcf61` — 원격에 남아 있지만 더 쓰지 않는다). 배포 브랜치 이름은 바뀌지 않는다.
+  아래 `$WORK`를 그 세션의 작업 브랜치로 읽는다.
 
   ```bash
-  git push -u origin claude/stoic-albattani-qwcf61
+  WORK=claude/lucid-ptolemy-a2gca1
+  git push -u origin $WORK
   # 갈라진 것이 없는지 먼저 본다 — 참이어야 fast-forward다
   git merge-base --is-ancestor \
       origin/claude/vision-surface-defect-detection-j16xhj \
-      origin/claude/stoic-albattani-qwcf61
-  git push origin claude/stoic-albattani-qwcf61:claude/vision-surface-defect-detection-j16xhj
+      origin/$WORK
+  git push origin $WORK:claude/vision-surface-defect-detection-j16xhj
   git fetch origin && git branch -f claude/vision-surface-defect-detection-j16xhj \
       origin/claude/vision-surface-defect-detection-j16xhj   # 로컬 참조도 맞춘다
   ```

@@ -1,8 +1,8 @@
 # 인수인계 (HANDOFF)
 
-> 마지막 갱신: 2026-10-02
-> 작업 브랜치: `claude/stoic-albattani-qwcf61`
-> 배포 브랜치: `claude/vision-surface-defect-detection-j16xhj` (README 배포표 기준. 지금 두 브랜치는 같은 커밋)
+> 마지막 갱신: 2026-11-09 (다른 계정으로 이관)
+> 작업 브랜치: `claude/lucid-ptolemy-a2gca1` — **세션(계정)마다 바뀐다.** 이전은 `claude/stoic-albattani-qwcf61`
+> 배포 브랜치: `claude/vision-surface-defect-detection-j16xhj` (README 배포표 기준. 이름은 바뀌지 않는다)
 > ⚠️ 새 세션이 **배포 브랜치가 체크아웃된 채로** 열릴 수 있다 — 아래 «2-1» 참조
 
 이 문서는 **세션이 끊겼을 때 처음부터 다시 파악하지 않기 위한 것**이다.
@@ -24,19 +24,34 @@ Streamlit에서 FastAPI + React로 통째로 옮겼다.** 실행은 `python serv
 
 ---
 
-## 2. 지금 상태 (2026-10-02 실측)
+## 2. 지금 상태 (2026-11-09 실측 — 이관 직후)
 
 | 확인 항목 | 결과 |
 |---|---|
 | 작업 트리 | 깨끗함 (`git status` 비어 있음) |
-| origin 동기화 | 작업·배포 브랜치 같은 커밋. 갈라진 것 없음 |
+| origin 동기화 | 이관 시점(`55ceadc`)에 새·옛 작업 브랜치와 배포 브랜치가 모두 같은 커밋. 갈라진 것 없음 |
 | 실행 스택 | **FastAPI + React** (`python serve.py` → http://localhost:8000). Streamlit 코드는 제거됨 |
-| 설치된 판 | fastapi 0.142.2 · uvicorn 0.50.2 · pandas 3.0.6 · scikit-learn 1.9.1 · joblib 1.6.0 · Node 22 / vite 7 / react 19 |
+| 설치된 판 | fastapi **0.162.2** · uvicorn **0.54.0** · pandas 3.0.5 · scikit-learn 1.9.1 · joblib 1.6.0 · numpy 2.5.3 · opencv-python-headless **5.0.0.93** · ruff **0.16.9** · Node 22 / vite 7 / react 19 (10-02 검증 조합은 fastapi 0.142.2 · uvicorn 0.50.2 — 판이 올랐지만 전부 통과) |
 | 테스트 | **809 passed · 4 skipped = 813** |
-| 린트 | `ruff check .` 9건 (전부 기존 항목) |
-| 프런트 빌드 | `cd web && npm run build` 통과 (tsc + vite). 결과 `web/dist` 커밋됨 |
-| 앱 기동 | `python serve.py --no-browser` → `/api/health` ok, 6화면 모두 Playwright 스크린샷에서 콘솔 오류 0 |
+| 린트 | `ruff check .` 9건 (전부 기존 항목). ruff 0.16은 기본 규칙이 넓어 115건이 나와서 `pyproject.toml`에 규칙을 고정했다 |
+| 프런트 빌드 | `cd web && npm ci && npm run build` 통과 (tsc + vite). 다시 빌드해도 `web/dist`에 차이 없음 — 커밋된 dist가 소스와 맞다 |
+| 앱 기동 | `python serve.py --no-browser` → `/api/health` ok, `/` 200 (10-02에는 6화면 모두 Playwright 스크린샷에서 콘솔 오류 0) |
 | 검증 데이터 | 없음 — `data/`·`artifacts/`는 컨테이너와 함께 사라졌다 (§4) |
+
+### 2-00. 11-09 — 다른 계정으로 이관
+
+이관 직후 점검과 정리. 코드 동작은 바꾸지 않았다.
+
+* **작업 브랜치가 `claude/lucid-ptolemy-a2gca1`로 바뀌었다.** 세션이 지정하는 브랜치를 쓰므로 계정·세션이
+  바뀌면 또 바뀔 수 있다. CLAUDE.md «작업 습관»의 명령은 `$WORK` 변수로 바꿔 두었다. 옛 브랜치
+  `claude/stoic-albattani-qwcf61`은 원격에 `55ceadc`로 남아 있지만 더 쓰지 않는다.
+* **ruff 규칙 고정** — 새 컨테이너의 ruff 0.16.9가 기본 규칙을 넓혀 9건 → 115건이 됐다. `pyproject.toml`
+  `[tool.ruff.lint] select`로 예전 기본값을 못 박았다.
+* **`tmp/` 정리** — 예전 세션의 scratchpad 영상(`s.mp4`, 248KB)이 `4a824b1`에 섞여 커밋돼 있었다. 지우고 `.gitignore`에 넣었다.
+* **배포 기록 확인 필요** — 10-17 커밋 `55ceadc`의 제목에 `느린 눈-20261018-v1.zip`이 있지만 `docs/releases.md`에는
+  10-02 `v01` 한 줄뿐이다. 그 zip을 실제로 만들어 배포했다면 기록 줄이 커밋되지 않은 것이다. 사용자에게
+  확인했고 답을 받기 전까지는 표를 손으로 고치지 않는다(손으로 고치면 번호가 꼬인다).
+* 테스트 경고 1건: `monitoring.py:85`의 `pd.to_datetime`이 형식을 추론하지 못한다는 UserWarning. 실패는 아니다.
 
 ### 2-0. 10-01~02 세션에서 한 것 — Streamlit → FastAPI + React 전환
 
@@ -79,11 +94,12 @@ Windows 실기에서는 돌려 보지 못했고, 리눅스에서 «Windows처럼
 보면 코드를 의심하지 말고 아래만 하면 된다:
 
 ```bash
-git fetch origin claude/stoic-albattani-qwcf61
-git branch --track claude/stoic-albattani-qwcf61 origin/claude/stoic-albattani-qwcf61
-git checkout claude/stoic-albattani-qwcf61
+WORK=claude/lucid-ptolemy-a2gca1   # 그 세션이 지정한 작업 브랜치
+git fetch origin $WORK
+git branch --track $WORK origin/$WORK
+git checkout $WORK
 # 갈라진 게 없는지 — 0이어야 한다
-git log --oneline origin/claude/stoic-albattani-qwcf61..origin/claude/vision-surface-defect-detection-j16xhj | wc -l
+git log --oneline origin/$WORK..origin/claude/vision-surface-defect-detection-j16xhj | wc -l
 ```
 
 이후 푸시는 CLAUDE.md «작업 습관»대로 작업 브랜치 → 배포 브랜치 fast-forward 순서다.
